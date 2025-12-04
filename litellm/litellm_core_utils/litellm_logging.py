@@ -2532,13 +2532,34 @@ class Logging(LiteLLMLoggingBaseClass):
                 # Applies redaction before logging and supports streaming responses
                 # ====================================================================
                 if isinstance(callback, CustomLogger):  # custom logger class
+                    # ================================================================
+                    # BLOCK 3B-2a: MODEL CALL DETAILS REFERENCE ASSIGNMENT
+                    # Creates reference to self.model_call_details for callback use
+                    # NOTE: This creates a reference, not a copy - potential memory leak
+                    # Callbacks hold reference to original dict, preventing GC cleanup
+                    # ================================================================
                     model_call_details: Dict = self.model_call_details
-                    ##################################
-                    # call redaction hook for custom logger
+                    # ================================================================
+                    # END BLOCK 3B-2a: MODEL CALL DETAILS REFERENCE ASSIGNMENT
+                    # ================================================================
+                    
+                    # ================================================================
+                    # BLOCK 3B-2b: PAYLOAD REDACTION
+                    # Applies callback-specific redaction rules to logging payload
+                    # May return modified dict or original dict depending on callback
+                    # ================================================================
                     model_call_details = callback.redact_standard_logging_payload_from_model_call_details(
                         model_call_details=model_call_details
                     )
-                    ##################################
+                    # ================================================================
+                    # END BLOCK 3B-2b: PAYLOAD REDACTION
+                    # ================================================================
+                    
+                    # ================================================================
+                    # BLOCK 3B-2c: CALLBACK INVOCATION WITH STREAMING HANDLING
+                    # Routes to appropriate log method based on streaming state
+                    # Calls async_log_success_event or async_log_stream_event
+                    # ================================================================
                     if self.stream is True:
                         if "async_complete_streaming_response" in model_call_details:
                             await callback.async_log_success_event(
@@ -2563,6 +2584,9 @@ class Logging(LiteLLMLoggingBaseClass):
                             start_time=start_time,
                             end_time=end_time,
                         )
+                    # ================================================================
+                    # END BLOCK 3B-2c: CALLBACK INVOCATION WITH STREAMING HANDLING
+                    # ================================================================
                 # ====================================================================
                 # END BLOCK 3B-2: CUSTOMLOGGER CALLBACK EXECUTION
                 # ====================================================================
