@@ -2350,7 +2350,6 @@ class Logging(LiteLLMLoggingBaseClass):
             cache_hit=cache_hit,
             standard_logging_object=kwargs.get("standard_logging_object", None),
         )
-        
         # ============================================================================
         # END BLOCK 1: PREPROCESSING AND VALIDATION
         # ============================================================================
@@ -2459,7 +2458,6 @@ class Logging(LiteLLMLoggingBaseClass):
                 )
 
         self.has_run_logging(event_type="async_success")
-        
         # ============================================================================
         # END BLOCK 2: STREAMING RESPONSE ASSEMBLY AND LOGGING HOOKS
         # ============================================================================
@@ -2470,7 +2468,10 @@ class Logging(LiteLLMLoggingBaseClass):
         # ============================================================================
         
         for callback in callbacks:
-            # check if callback can run for this request
+            # ========================================================================
+            # BLOCK 3A: CALLBACK ITERATION AND FILTERING
+            # Determines if the current callback should run for this request
+            # ========================================================================
             litellm_params = self.model_call_details.get("litellm_params", {})
             should_run = self.should_run_callback(
                 callback=callback,
@@ -2479,6 +2480,15 @@ class Logging(LiteLLMLoggingBaseClass):
             )
             if not should_run:
                 continue
+            # ========================================================================
+            # END BLOCK 3A: CALLBACK ITERATION AND FILTERING
+            # ========================================================================
+
+            # ========================================================================
+            # BLOCK 3B: CALLBACK TYPE-SPECIFIC EXECUTION
+            # Executes different callback types (OpenMeter, CustomLogger, callable, DynamoDB)
+            # Each callback type has streaming and non-streaming variants
+            # ========================================================================
             try:
                 if callback == "openmeter" and openMeterLogger is not None:
                     if self.stream is True:
@@ -2602,12 +2612,24 @@ class Logging(LiteLLMLoggingBaseClass):
                             end_time=end_time,
                             print_verbose=print_verbose,
                         )
+                # ====================================================================
+                # END BLOCK 3B: CALLBACK TYPE-SPECIFIC EXECUTION
+                # ====================================================================
+            
+            # ========================================================================
+            # BLOCK 3C: CALLBACK ERROR HANDLING
+            # Catches and logs callback execution failures without blocking the request
+            # Increments Prometheus failure metrics for observability
+            # ========================================================================
             except Exception:
                 verbose_logger.error(
                     f"LiteLLM.LoggingError: [Non-Blocking] Exception occurred while success logging {traceback.format_exc()}"
                 )
                 self._handle_callback_failure(callback=callback)
                 pass
+            # ========================================================================
+            # END BLOCK 3C: CALLBACK ERROR HANDLING
+            # ========================================================================
         
         # ============================================================================
         # END BLOCK 3: CALLBACK EXECUTION
