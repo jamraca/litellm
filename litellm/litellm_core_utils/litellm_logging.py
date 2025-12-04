@@ -2563,7 +2563,6 @@ class Logging(LiteLLMLoggingBaseClass):
                             start_time=start_time,
                             end_time=end_time,
                         )
-                continue
                 # ====================================================================
                 # END BLOCK 3B-2: CUSTOMLOGGER CALLBACK EXECUTION
                 # ====================================================================
