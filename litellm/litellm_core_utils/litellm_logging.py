@@ -2490,6 +2490,11 @@ class Logging(LiteLLMLoggingBaseClass):
             # Each callback type has streaming and non-streaming variants
             # ========================================================================
             try:
+                # ====================================================================
+                # BLOCK 3B-1: OPENMETER CALLBACK EXECUTION
+                # Handles OpenMeter-specific logging for usage tracking and metering
+                # Supports both streaming and non-streaming responses
+                # ====================================================================
                 if callback == "openmeter" and openMeterLogger is not None:
                     if self.stream is True:
                         if (
@@ -2518,9 +2523,17 @@ class Logging(LiteLLMLoggingBaseClass):
                             start_time=start_time,
                             end_time=end_time,
                         )
+                # ====================================================================
+                # END BLOCK 3B-1: OPENMETER CALLBACK EXECUTION
+                # ====================================================================
 
+                # ====================================================================
+                # BLOCK 3B-2: CUSTOMLOGGER CALLBACK EXECUTION
+                # Handles CustomLogger class instances (proxy hooks, integrations)
+                # Applies redaction before logging and supports streaming responses
+                # ====================================================================
                 if isinstance(callback, CustomLogger):  # custom logger class
-                    model_call_details: Dict = self.model_call_details.copy()  # FIX: Break reference to prevent memory leak
+                    model_call_details: Dict = self.model_call_details
                     ##################################
                     # call redaction hook for custom logger
                     model_call_details = callback.redact_standard_logging_payload_from_model_call_details(
@@ -2551,6 +2564,14 @@ class Logging(LiteLLMLoggingBaseClass):
                             start_time=start_time,
                             end_time=end_time,
                         )
+                # ====================================================================
+                # END BLOCK 3B-2: CUSTOMLOGGER CALLBACK EXECUTION
+                # ====================================================================
+                # ====================================================================
+                # BLOCK 3B-3: LEGACY CALLBACK EXECUTION
+                # Handles legacy callable functions and DynamoDB logging
+                # Uses global logger instances for backwards compatibility
+                # ====================================================================
                 if callable(callback):  # custom logger functions
                     global customLogger
                     if customLogger is None:
@@ -2612,6 +2633,9 @@ class Logging(LiteLLMLoggingBaseClass):
                             end_time=end_time,
                             print_verbose=print_verbose,
                         )
+                # ====================================================================
+                # END BLOCK 3B-3: LEGACY CALLBACK EXECUTION
+                # ====================================================================
                 # ====================================================================
                 # END BLOCK 3B: CALLBACK TYPE-SPECIFIC EXECUTION
                 # ====================================================================
