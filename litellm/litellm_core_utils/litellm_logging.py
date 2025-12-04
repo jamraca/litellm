@@ -2489,6 +2489,7 @@ class Logging(LiteLLMLoggingBaseClass):
             # Executes different callback types (OpenMeter, CustomLogger, callable, DynamoDB)
             # Each callback type has streaming and non-streaming variants
             # ========================================================================
+            continue
             try:
                 if callback == "openmeter" and openMeterLogger is not None:
                     if self.stream is True:
