@@ -2561,6 +2561,7 @@ class Logging(LiteLLMLoggingBaseClass):
                     # Calls async_log_success_event or async_log_stream_event
                     # ================================================================
                     if self.stream is True:
+                        print("streaming is true")
                         if "async_complete_streaming_response" in model_call_details:
                             await callback.async_log_success_event(
                                 kwargs=model_call_details,
@@ -2578,6 +2579,7 @@ class Logging(LiteLLMLoggingBaseClass):
                                 end_time=end_time,
                             )
                     else:
+                        continue
                         await callback.async_log_success_event(
                             kwargs=model_call_details,
                             response_obj=result,
