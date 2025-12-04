@@ -2294,6 +2294,11 @@ class Logging(LiteLLMLoggingBaseClass):
         print_verbose(
             "Logging Details LiteLLM-Async Success Call, cache_hit={}".format(cache_hit)
         )
+        
+        # ============================================================================
+        # BLOCK 1: PREPROCESSING AND VALIDATION
+        # Validates logging should run, calculates batch costs, and prepares initial data
+        # ============================================================================
         if not self.should_run_logging(
             event_type="async_success"
         ):  # prevent double logging
@@ -2345,7 +2350,16 @@ class Logging(LiteLLMLoggingBaseClass):
             cache_hit=cache_hit,
             standard_logging_object=kwargs.get("standard_logging_object", None),
         )
+        
+        # ============================================================================
+        # END BLOCK 1: PREPROCESSING AND VALIDATION
+        # ============================================================================
 
+        # ============================================================================
+        # BLOCK 2: STREAMING RESPONSE ASSEMBLY AND LOGGING HOOKS
+        # Builds complete streaming response, calculates costs, and runs logging hooks
+        # ============================================================================
+        
         ## BUILD COMPLETE STREAMED RESPONSE
         if "async_complete_streaming_response" in self.model_call_details:
             return  # break out of this.
@@ -2445,7 +2459,16 @@ class Logging(LiteLLMLoggingBaseClass):
                 )
 
         self.has_run_logging(event_type="async_success")
+        
+        # ============================================================================
+        # END BLOCK 2: STREAMING RESPONSE ASSEMBLY AND LOGGING HOOKS
+        # ============================================================================
 
+        # ============================================================================
+        # BLOCK 3: CALLBACK EXECUTION
+        # Executes all registered callbacks with proper error handling
+        # ============================================================================
+        
         for callback in callbacks:
             # check if callback can run for this request
             litellm_params = self.model_call_details.get("litellm_params", {})
@@ -2585,6 +2608,10 @@ class Logging(LiteLLMLoggingBaseClass):
                 )
                 self._handle_callback_failure(callback=callback)
                 pass
+        
+        # ============================================================================
+        # END BLOCK 3: CALLBACK EXECUTION
+        # ============================================================================
 
     def _handle_callback_failure(self, callback: Any):
         """
