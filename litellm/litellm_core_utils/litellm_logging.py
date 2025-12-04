@@ -2526,7 +2526,6 @@ class Logging(LiteLLMLoggingBaseClass):
                 # ====================================================================
                 # END BLOCK 3B-1: OPENMETER CALLBACK EXECUTION
                 # ====================================================================
-                continue
                 # ====================================================================
                 # BLOCK 3B-2: CUSTOMLOGGER CALLBACK EXECUTION
                 # Handles CustomLogger class instances (proxy hooks, integrations)
@@ -2564,6 +2563,7 @@ class Logging(LiteLLMLoggingBaseClass):
                             start_time=start_time,
                             end_time=end_time,
                         )
+                continue
                 # ====================================================================
                 # END BLOCK 3B-2: CUSTOMLOGGER CALLBACK EXECUTION
                 # ====================================================================
