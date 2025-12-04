@@ -201,6 +201,9 @@ class DBSpendUpdateWriter:
                     prisma_client=prisma_client,
                 )
             )
+            
+            # MEMORY NOTE: payload is appended to prisma_client.spend_log_transactions
+            # and will be cleared after batch processing. Cannot delete here.
 
             verbose_proxy_logger.debug("Runs spend update on all tables")
         except Exception:
@@ -408,8 +411,25 @@ class DBSpendUpdateWriter:
             )
         )
         if prisma_client is not None and spend_logs_url is not None:
+            # MEMORY FIX: Check if queue is backing up (iterencode memory leak)
+            # If spend_log_transactions list grows too large, payloads accumulate in memory
+            # Each payload contains 26MB+ of JSON-encoded strings from iterencode
+            if len(prisma_client.spend_log_transactions) > 1000:
+                verbose_proxy_logger.warning(
+                    f"spend_log_transactions queue is large ({len(prisma_client.spend_log_transactions)}). "
+                    "Requests may be coming in faster than they can be processed. Dropping oldest entries to prevent memory leak."
+                )
+                # Keep only the most recent 500 entries
+                prisma_client.spend_log_transactions = prisma_client.spend_log_transactions[-500:]
             prisma_client.spend_log_transactions.append(payload)
         elif prisma_client is not None:
+            # MEMORY FIX: Same protection for non-URL case
+            if len(prisma_client.spend_log_transactions) > 1000:
+                verbose_proxy_logger.warning(
+                    f"spend_log_transactions queue is large ({len(prisma_client.spend_log_transactions)}). "
+                    "Dropping oldest entries to prevent memory leak."
+                )
+                prisma_client.spend_log_transactions = prisma_client.spend_log_transactions[-500:]
             prisma_client.spend_log_transactions.append(payload)
         else:
             verbose_proxy_logger.debug(

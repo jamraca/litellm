@@ -2533,12 +2533,13 @@ class Logging(LiteLLMLoggingBaseClass):
                 # ====================================================================
                 if isinstance(callback, CustomLogger):  # custom logger class
                     # ================================================================
-                    # BLOCK 3B-2a: MODEL CALL DETAILS REFERENCE ASSIGNMENT
-                    # Creates reference to self.model_call_details for callback use
-                    # NOTE: This creates a reference, not a copy - potential memory leak
-                    # Callbacks hold reference to original dict, preventing GC cleanup
+                    # BLOCK 3B-2a: MODEL CALL DETAILS COPY ASSIGNMENT
+                    # Creates shallow copy of self.model_call_details for callback use
+                    # FIX: Changed from reference to copy to prevent memory leak
+                    # Each callback gets independent copy, allowing GC to free memory
+                    # after each callback completes instead of waiting for all callbacks
                     # ================================================================
-                    model_call_details: Dict = self.model_call_details
+                    model_call_details: Dict = self.model_call_details.copy()
                     # ================================================================
                     # END BLOCK 3B-2a: MODEL CALL DETAILS REFERENCE ASSIGNMENT
                     # ================================================================
@@ -2559,7 +2560,7 @@ class Logging(LiteLLMLoggingBaseClass):
                     # BLOCK 3B-2c: CALLBACK INVOCATION WITH STREAMING HANDLING
                     # Routes to appropriate log method based on streaming state
                     # Calls async_log_success_event or async_log_stream_event
-                    # ================================================================
+                    # ================================================================                    
                     if self.stream is True:
                         print("streaming is true")
                         if "async_complete_streaming_response" in model_call_details:
@@ -2579,7 +2580,6 @@ class Logging(LiteLLMLoggingBaseClass):
                                 end_time=end_time,
                             )
                     else:
-                        continue
                         await callback.async_log_success_event(
                             kwargs=model_call_details,
                             response_obj=result,
