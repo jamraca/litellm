@@ -876,7 +876,8 @@ async def _client_async_logging_helper(
                 result=result, start_time=start_time, end_time=end_time
             )
         )
-
+        
+        return
         ################################################
         # Sync Logging Worker
         ################################################
@@ -1308,14 +1309,14 @@ def client(original_function):  # noqa: PLR0915
             verbose_logger.info("Wrapper: Completed Call, calling success_handler")
             # Copy the current context to propagate it to the background thread
             # This is essential for OpenTelemetry span context propagation
-            # ctx = contextvars.copy_context()
-            # executor.submit(
-            #     ctx.run,
-            #     logging_obj.success_handler,
-            #     result,
-            #     start_time,
-            #     end_time,
-            # )
+            ctx = contextvars.copy_context()
+            executor.submit(
+                ctx.run,
+                logging_obj.success_handler,
+                result,
+                start_time,
+                end_time,
+            )
             # RETURN RESULT
             update_response_metadata(
                 result=result,
@@ -1539,15 +1540,15 @@ def client(original_function):  # noqa: PLR0915
             )
 
             # # LOG SUCCESS - handle streaming success logging in the _next_ object
-            # asyncio.create_task(
-            #     _client_async_logging_helper(
-            #         logging_obj=logging_obj,
-            #         result=result,
-            #         start_time=start_time,
-            #         end_time=end_time,
-            #         is_completion_with_fallbacks=is_completion_with_fallbacks,
-            #     )
-            # )
+            asyncio.create_task(
+                _client_async_logging_helper(
+                    logging_obj=logging_obj,
+                    result=result,
+                    start_time=start_time,
+                    end_time=end_time,
+                    is_completion_with_fallbacks=is_completion_with_fallbacks,
+                )
+            )
             logging_obj.handle_sync_success_callbacks_for_async_calls(
                 result=result,
                 start_time=start_time,
