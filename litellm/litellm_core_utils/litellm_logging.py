@@ -2489,7 +2489,6 @@ class Logging(LiteLLMLoggingBaseClass):
             # Executes different callback types (OpenMeter, CustomLogger, callable, DynamoDB)
             # Each callback type has streaming and non-streaming variants
             # ========================================================================
-            continue
             try:
                 if callback == "openmeter" and openMeterLogger is not None:
                     if self.stream is True:
@@ -2521,7 +2520,7 @@ class Logging(LiteLLMLoggingBaseClass):
                         )
 
                 if isinstance(callback, CustomLogger):  # custom logger class
-                    model_call_details: Dict = self.model_call_details
+                    model_call_details: Dict = self.model_call_details.copy()  # FIX: Break reference to prevent memory leak
                     ##################################
                     # call redaction hook for custom logger
                     model_call_details = callback.redact_standard_logging_payload_from_model_call_details(
