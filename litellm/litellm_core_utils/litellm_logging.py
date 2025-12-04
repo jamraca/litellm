@@ -2288,7 +2288,6 @@ class Logging(LiteLLMLoggingBaseClass):
     async def async_success_handler(  # noqa: PLR0915
         self, result=None, start_time=None, end_time=None, cache_hit=None, **kwargs
     ):
-        return
         """
         Implementing async callbacks, to handle asyncio event loop issues when custom integrations need to use async functions.
         """
