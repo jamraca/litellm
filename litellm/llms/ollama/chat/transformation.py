@@ -147,6 +147,7 @@ class OllamaChatConfig(BaseConfig):
             "functions",
             "response_format",
             "reasoning_effort",
+            "thinking",  # Anthropic thinking param - translated to Ollama's think
         ]
 
     def map_openai_params(
@@ -189,6 +190,25 @@ class OllamaChatConfig(BaseConfig):
                     optional_params["think"] = value
                 else:
                     optional_params["think"] = value in {"low", "medium", "high"}
+            # Anthropic thinking param: {type: "enabled", budget_tokens: N}
+            # Translate to Ollama's think param (true/false/"high"/"medium"/"low")
+            if param == "thinking" and isinstance(value, dict):
+                thinking_type = value.get("type")
+                if thinking_type == "enabled":
+                    budget_tokens = value.get("budget_tokens", 10000)
+                    # Map budget_tokens to Ollama's think effort levels
+                    # For gpt-oss models, use string effort levels
+                    if model.startswith("gpt-oss"):
+                        if budget_tokens < 5000:
+                            optional_params["think"] = "low"
+                        elif budget_tokens <= 15000:
+                            optional_params["think"] = "medium"
+                        else:
+                            optional_params["think"] = "high"
+                    else:
+                        # For other Ollama models, just enable thinking
+                        optional_params["think"] = True
+                # If type is "disabled" or missing, don't set think (defaults to off)
             ### FUNCTION CALLING LOGIC ###
             if param == "tools":
                 ## CHECK IF MODEL SUPPORTS TOOL CALLING ##
