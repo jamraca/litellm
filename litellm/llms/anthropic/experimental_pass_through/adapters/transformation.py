@@ -620,7 +620,24 @@ class LiteLLMAnthropicMessagesAdapter:
                         type="text", text=choice.message.content
                     )
                 )
-            # Handle tool calls (in parallel to text content)
+
+            # Handle reasoning_content (from Ollama/DeepSeek thinking models)
+            # This is separate from thinking_blocks - it's a flat field on the message
+            # Use elif to avoid duplicate thinking if thinking_blocks already exists
+            elif (
+                hasattr(choice.message, "reasoning_content")
+                and choice.message.reasoning_content
+            ):
+                reasoning_value = choice.message.reasoning_content
+                new_content.append(
+                    AnthropicResponseContentBlockThinking(
+                        type="thinking",
+                        thinking=str(reasoning_value) if reasoning_value else "",
+                        signature=None,
+                    )
+                )
+
+            # Handle tool calls (separate from thinking - both can coexist)
             if (
                 choice.message.tool_calls is not None
                 and len(choice.message.tool_calls) > 0
@@ -735,6 +752,11 @@ class LiteLLMAnthropicMessagesAdapter:
                         return "thinking", ChatCompletionThinkingBlock(
                             type="thinking", thinking=thinking, signature=signature
                         )
+            # Handle reasoning_content directly on delta (from Ollama/DeepSeek thinking models)
+            elif hasattr(choice.delta, "reasoning_content") and choice.delta.reasoning_content:
+                return "thinking", ChatCompletionThinkingBlock(
+                    type="thinking", thinking="", signature=""
+                )
 
         return "text", TextBlock(type="text", text="")
 
@@ -780,6 +802,9 @@ class LiteLLMAnthropicMessagesAdapter:
 
                             reasoning_content += thinking
                             reasoning_signature += signature
+            # Handle reasoning_content directly on delta (from Ollama/DeepSeek thinking models)
+            elif hasattr(choice.delta, "reasoning_content") and choice.delta.reasoning_content:
+                reasoning_content += str(choice.delta.reasoning_content)
 
         if reasoning_content and reasoning_signature:
             raise ValueError(
