@@ -210,46 +210,16 @@ class OllamaChatConfig(BaseConfig):
                         optional_params["think"] = True
                 # If type is "disabled" or missing, don't set think (defaults to off)
             ### FUNCTION CALLING LOGIC ###
+            # Ollama 0.6+ supports native tool calling for all models.
+            # Always use native tools - the JSON fallback mode was for pre-0.6 Ollama
+            # which is no longer supported. Native tools provide better reliability
+            # and proper tool_calls response format.
             if param == "tools":
-                ## CHECK IF MODEL SUPPORTS TOOL CALLING ##
-                try:
-                    model_info = litellm.get_model_info(
-                        model=model, custom_llm_provider="ollama"
-                    )
-                    if model_info.get("supports_function_calling") is True:
-                        optional_params["tools"] = value
-                    else:
-                        raise Exception
-                except Exception:
-                    optional_params["format"] = "json"
-                    litellm.add_function_to_prompt = (
-                        True  # so that main.py adds the function call to the prompt
-                    )
-                    optional_params["functions_unsupported_model"] = value
-
-                    if len(optional_params["functions_unsupported_model"]) == 1:
-                        optional_params["function_name"] = optional_params[
-                            "functions_unsupported_model"
-                        ][0]["function"]["name"]
+                optional_params["tools"] = value
 
             if param == "functions":
-                ## CHECK IF MODEL SUPPORTS TOOL CALLING ##
-                try:
-                    model_info = litellm.get_model_info(
-                        model=model, custom_llm_provider="ollama"
-                    )
-                    if model_info.get("supports_function_calling") is True:
-                        optional_params["tools"] = value
-                    else:
-                        raise Exception
-                except Exception:
-                    optional_params["format"] = "json"
-                    litellm.add_function_to_prompt = (
-                        True  # so that main.py adds the function call to the prompt
-                    )
-                    optional_params["functions_unsupported_model"] = (
-                        non_default_params.get("functions")
-                    )
+                # Convert functions to tools format
+                optional_params["tools"] = value
         non_default_params.pop("tool_choice", None)  # causes ollama requests to hang
         non_default_params.pop("functions", None)  # causes ollama requests to hang
         return optional_params
@@ -309,6 +279,23 @@ class OllamaChatConfig(BaseConfig):
         litellm_params["function_name"] = function_name
         tools = optional_params.pop("tools", None)
 
+        # First pass: build tool_call_id -> tool_name mapping from assistant messages
+        # This is needed to translate tool result messages (which have tool_call_id)
+        # to Ollama format (which requires tool_name)
+        tool_call_id_to_name: dict[str, str] = {}
+        for m in messages:
+            if isinstance(m, BaseModel):
+                m = m.model_dump(exclude_none=True)
+            if m.get("role") == "assistant":
+                tc = m.get("tool_calls")
+                if tc is not None and isinstance(tc, list):
+                    for tool in tc:
+                        tool_id = tool.get("id", "")
+                        func = tool.get("function", {})
+                        tool_name = func.get("name", "")
+                        if tool_id and tool_name:
+                            tool_call_id_to_name[tool_id] = tool_name
+
         new_messages = []
         for m in messages:
             if isinstance(
@@ -316,8 +303,8 @@ class OllamaChatConfig(BaseConfig):
             ):  # avoid message serialization issues - https://github.com/BerriAI/litellm/issues/5319
                 m = m.model_dump(exclude_none=True)
             tool_calls = m.get("tool_calls")
+            ollama_tool_calls: List[OllamaToolCall] = []
             if tool_calls is not None and isinstance(tool_calls, list):
-                new_tools: List[OllamaToolCall] = []
                 for tool in tool_calls:
                     typed_tool = ChatCompletionAssistantToolCall(**tool)  # type: ignore
                     if typed_tool["type"] == "function":
@@ -330,8 +317,7 @@ class OllamaChatConfig(BaseConfig):
                                 arguments=arguments,
                             )
                         )
-                        new_tools.append(ollama_tool_call)
-                cast(dict, m)["tool_calls"] = new_tools
+                        ollama_tool_calls.append(ollama_tool_call)
             reasoning_content, parsed_content = _extract_reasoning_content(
                 cast(dict, m)
             )
@@ -347,6 +333,18 @@ class OllamaChatConfig(BaseConfig):
                 ollama_message["content"] = content_str
             if images is not None:
                 ollama_message["images"] = images
+            # Include tool_calls on assistant messages
+            if ollama_tool_calls:
+                ollama_message["tool_calls"] = ollama_tool_calls
+            # Handle tool result messages: Ollama requires tool_name instead of tool_call_id
+            if m.get("role") == "tool":
+                tool_call_id = m.get("tool_call_id", "")
+                tool_name = tool_call_id_to_name.get(tool_call_id, "")
+                # Fallback: check if name was passed directly
+                if not tool_name:
+                    tool_name = m.get("name", "") or m.get("tool_name", "")
+                if tool_name:
+                    ollama_message["tool_name"] = tool_name
 
             new_messages.append(ollama_message)
 
