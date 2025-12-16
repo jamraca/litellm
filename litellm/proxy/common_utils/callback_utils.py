@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional
 
+import sys
+
 import litellm
 from litellm import get_secret
 from litellm._logging import verbose_proxy_logger
