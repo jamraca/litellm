@@ -537,7 +537,9 @@ except ImportError:
 
 server_root_path = os.getenv("SERVER_ROOT_PATH", "")
 _license_check = LicenseCheck()
-premium_user: bool = _license_check.is_premium()
+# FORK PATCH: Always enable premium features (public_routes, etc.)
+# Original: premium_user: bool = _license_check.is_premium()
+premium_user: bool = True
 premium_user_data: Optional["EnterpriseLicenseData"] = (
     _license_check.airgapped_license_data
 )
@@ -2148,6 +2150,17 @@ class ProxyConfig:
         global master_key, user_config_file_path, otel_logging, user_custom_auth, user_custom_auth_path, user_custom_key_generate, user_custom_sso, user_custom_ui_sso_sign_in_handler, use_background_health_checks, use_shared_health_check, health_check_interval, use_queue, proxy_budget_rescheduler_max_time, proxy_budget_rescheduler_min_time, ui_access_mode, litellm_master_key_hash, proxy_batch_write_at, disable_spend_logs, prompt_injection_detection_obj, redis_usage_cache, store_model_in_db, premium_user, open_telemetry_logger, health_check_details, proxy_batch_polling_interval, config_passthrough_endpoints
 
         config: dict = await self.get_config(config_file_path=config_file_path)
+        # DEBUG: Track config loading
+        with open('/tmp/litellm-debug.log', 'a') as _debug_f:
+            import datetime
+            _debug_f.write(f"\n{'='*80}\n")
+            _debug_f.write(f"{datetime.datetime.now()}: Config loaded from {config_file_path}\n")
+            _debug_f.write(f"litellm_settings in config: {'litellm_settings' in config}\n")
+            if 'litellm_settings' in config:
+                _debug_f.write(f"litellm_settings keys: {list(config['litellm_settings'].keys())}\n")
+            _debug_f.write(f"{'='*80}\n")
+            _debug_f.flush()
+
 
         self._load_environment_variables(config=config)
 

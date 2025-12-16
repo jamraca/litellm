@@ -31,6 +31,13 @@ def initialize_callbacks_on_proxy(  # noqa: PLR0915
     )
     from litellm.proxy.proxy_server import prisma_client
 
+    # DEBUG LOGGING - ROOT CAUSE INVESTIGATION
+    print(f"\n{'='*80}", file=sys.stderr)
+    print(f"initialize_callbacks_on_proxy CALLED!", file=sys.stderr)
+    print(f"value={value}", file=sys.stderr)
+    print(f"{'='*80}\n", file=sys.stderr)
+    sys.stderr.flush()
+    
     verbose_proxy_logger.debug(
         f"{blue_color_code}initializing callbacks={value} on proxy{reset_color_code}"
     )
