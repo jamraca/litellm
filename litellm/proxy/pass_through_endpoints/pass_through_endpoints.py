@@ -9,6 +9,12 @@ from typing import Any, Dict, List, Optional, Tuple, Union, cast
 from urllib.parse import urlencode, urlparse
 
 import httpx
+try:
+    from curl_cffi.requests import AsyncSession as CurlAsyncSession
+    CURL_CFFI_AVAILABLE = True
+except ImportError:
+    CURL_CFFI_AVAILABLE = False
+    CurlAsyncSession = None
 from fastapi import (
     APIRouter,
     Depends,
@@ -785,22 +791,51 @@ async def pass_through_request(  # noqa: PLR0915
         )
 
         if stream:
-            req = async_client.build_request(
-                "POST",
-                url,
-                json=_parsed_body,
-                params=requested_query_params,
-                headers=headers,
-            )
+            # Use curl-cffi for Anthropic OAuth to bypass TLS fingerprinting detection
+            is_anthropic_oauth = "api.anthropic.com" in str(url) and CURL_CFFI_AVAILABLE
 
-            response = await async_client.send(req, stream=stream)
+            if is_anthropic_oauth:
+                verbose_proxy_logger.info("🔐 Using curl-cffi TLS impersonation for Anthropic OAuth (bypassing fingerprint detection)")
 
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                raise HTTPException(
-                    status_code=e.response.status_code, detail=await e.response.aread()
+                # Build full URL with query params
+                full_url = str(url)
+                if requested_query_params:
+                    query_string = urlencode(requested_query_params)
+                    full_url = f"{full_url}?{query_string}"
+
+                # Use curl-cffi with Chrome impersonation for TLS fingerprint spoofing
+                async with CurlAsyncSession(impersonate="chrome") as session:
+                    response = await session.post(
+                        full_url,
+                        json=_parsed_body,
+                        headers=headers,
+                        stream=True,
+                    )
+
+                    if response.status_code >= 400:
+                        error_body = await response.atext()
+                        raise HTTPException(
+                            status_code=response.status_code,
+                            detail=error_body
+                        )
+            else:
+                # Use httpx for non-Anthropic OAuth requests
+                req = async_client.build_request(
+                    "POST",
+                    url,
+                    json=_parsed_body,
+                    params=requested_query_params,
+                    headers=headers,
                 )
+
+                response = await async_client.send(req, stream=stream)
+
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as e:
+                    raise HTTPException(
+                        status_code=e.response.status_code, detail=await e.response.aread()
+                    )
 
             return StreamingResponse(
                 PassThroughStreamingHandler.chunk_processor(
