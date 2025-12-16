@@ -790,12 +790,16 @@ async def pass_through_request(  # noqa: PLR0915
             )
         )
 
+        # DEBUG: Trace curl-cffi execution path
+        print(f"🔍 DEBUG: stream={stream}, url={url}, CURL_CFFI_AVAILABLE={CURL_CFFI_AVAILABLE}", flush=True)
+
         if stream:
             # Use curl-cffi for Anthropic OAuth to bypass TLS fingerprinting detection
             is_anthropic_oauth = "api.anthropic.com" in str(url) and CURL_CFFI_AVAILABLE
+            print(f"🔍 DEBUG: is_anthropic_oauth={is_anthropic_oauth}, url_check={'api.anthropic.com' in str(url)}, curl_cffi_check={CURL_CFFI_AVAILABLE}", flush=True)
 
             if is_anthropic_oauth:
-                verbose_proxy_logger.info("🔐 Using curl-cffi TLS impersonation for Anthropic OAuth (bypassing fingerprint detection)")
+                print("🔐 Using curl-cffi TLS impersonation for Anthropic OAuth (bypassing fingerprint detection)", flush=True)
 
                 # Build full URL with query params
                 full_url = str(url)
