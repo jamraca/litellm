@@ -40,6 +40,8 @@ def initialize_callbacks_on_proxy(  # noqa: PLR0915
     print(f"\n{'='*80}", file=sys.stderr)
     print(f"initialize_callbacks_on_proxy CALLED!", file=sys.stderr)
     print(f"value={value}", file=sys.stderr)
+    print(f"value type={type(value)}", file=sys.stderr)
+    print(f"isinstance(value, list)={isinstance(value, list)}", file=sys.stderr)
     print(f"{'='*80}\n", file=sys.stderr)
     sys.stderr.flush()
     
@@ -47,12 +49,16 @@ def initialize_callbacks_on_proxy(  # noqa: PLR0915
         f"{blue_color_code}initializing callbacks={value} on proxy{reset_color_code}"
     )
     if isinstance(value, list):
+        print(f"Processing callback list, length={len(value)}", file=sys.stderr)
         imported_list: List[Any] = []
         for callback in value:  # ["presidio", <my-custom-callback>]
+            print(f"  Processing callback: {callback}", file=sys.stderr)
             # check if callback is a custom logger compatible callback
             if isinstance(callback, str):
+                print(f"    Callback is string, attempting import...", file=sys.stderr)
                 # First, try to import as custom Python module (e.g., "custom_callbacks.conversation_callback")
                 callback = LoggingCallbackManager._import_custom_callback_module(callback)
+                print(f"    After import: type={type(callback)}, value={callback}", file=sys.stderr)
 
                 # If still a string, check if it's a generic_api callback
                 if isinstance(callback, str):
