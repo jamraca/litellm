@@ -42,9 +42,14 @@ def initialize_callbacks_on_proxy(  # noqa: PLR0915
         for callback in value:  # ["presidio", <my-custom-callback>]
             # check if callback is a custom logger compatible callback
             if isinstance(callback, str):
-                callback = LoggingCallbackManager._add_custom_callback_generic_api_str(
-                    callback
-                )
+                # First, try to import as custom Python module (e.g., "custom_callbacks.conversation_callback")
+                callback = LoggingCallbackManager._import_custom_callback_module(callback)
+
+                # If still a string, check if it's a generic_api callback
+                if isinstance(callback, str):
+                    callback = LoggingCallbackManager._add_custom_callback_generic_api_str(
+                        callback
+                    )
             if (
                 isinstance(callback, str)
                 and callback in litellm._known_custom_logger_compatible_callbacks
