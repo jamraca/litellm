@@ -293,8 +293,11 @@ def initialize_callbacks_on_proxy(  # noqa: PLR0915
                 )
                 imported_list.append(azure_content_safety_obj)
             elif isinstance(callback, CustomLogger):
+                print(f"    ✅ MATCH: isinstance(callback, CustomLogger) is True!", file=sys.stderr)
+                print(f"    Adding callback to imported_list", file=sys.stderr)
                 imported_list.append(callback)
             else:
+                print(f"    ❌ NO MATCH: Falling to else clause, calling get_instance_fn", file=sys.stderr)
                 verbose_proxy_logger.debug(
                     f"{blue_color_code} attempting to import custom calback={callback} {reset_color_code}"
                 )
@@ -304,9 +307,14 @@ def initialize_callbacks_on_proxy(  # noqa: PLR0915
                         config_file_path=config_file_path,
                     )
                 )
+        print(f"\nAfter loop: imported_list has {len(imported_list)} callbacks", file=sys.stderr)
+        print(f"imported_list={imported_list}", file=sys.stderr)
         if isinstance(litellm.callbacks, list):
+            print(f"Extending litellm.callbacks (current len={len(litellm.callbacks)}) with imported_list", file=sys.stderr)
             litellm.callbacks.extend(imported_list)
+            print(f"After extend: litellm.callbacks has {len(litellm.callbacks)} callbacks", file=sys.stderr)
         else:
+            print(f"Setting litellm.callbacks = imported_list", file=sys.stderr)
             litellm.callbacks = imported_list  # type: ignore
 
         if "prometheus" in value:
