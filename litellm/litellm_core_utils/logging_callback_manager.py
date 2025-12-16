@@ -192,6 +192,78 @@ class LoggingCallbackManager:
         _generic_api_logger_cache[callback] = new_logger
         return new_logger
 
+    @staticmethod
+    def _import_custom_callback_module(
+        callback_str: str,
+    ) -> Union[CustomLogger, str]:
+        """
+        Import a custom callback from a module string.
+
+        Format: "module_name.attribute_name"
+        Example: "custom_callbacks.conversation_callback"
+
+        Returns the callback instance if successful, otherwise returns the original string.
+        """
+        import importlib
+        import sys
+
+        # Only process if it looks like a module path (contains a dot)
+        if "." not in callback_str:
+            return callback_str
+
+        try:
+            # Split into module and attribute
+            parts = callback_str.rsplit(".", 1)
+            if len(parts) != 2:
+                return callback_str
+
+            module_name, attr_name = parts
+
+            # Try to import the module
+            module = importlib.import_module(module_name)
+
+            # Get the callback attribute from the module
+            callback_obj = getattr(module, attr_name, None)
+
+            if callback_obj is None:
+                verbose_logger.warning(
+                    "Custom callback '%s' not found in module '%s'",
+                    attr_name,
+                    module_name,
+                )
+                return callback_str
+
+            # Verify it's a CustomLogger instance
+            if not isinstance(callback_obj, CustomLogger):
+                verbose_logger.warning(
+                    "Custom callback '%s' is not a CustomLogger instance (got %s)",
+                    callback_str,
+                    type(callback_obj).__name__,
+                )
+                return callback_str
+
+            verbose_logger.info(
+                "Successfully loaded custom callback: %s (%s)",
+                callback_str,
+                type(callback_obj).__name__,
+            )
+            return callback_obj
+
+        except ImportError as e:
+            verbose_logger.warning(
+                "Failed to import custom callback module '%s': %s",
+                callback_str,
+                str(e),
+            )
+            return callback_str
+        except Exception as e:
+            verbose_logger.warning(
+                "Error loading custom callback '%s': %s",
+                callback_str,
+                str(e),
+            )
+            return callback_str
+
     def _safe_add_callback_to_list(
         self,
         callback: Union[CustomLogger, Callable, str],
@@ -209,9 +281,14 @@ class LoggingCallbackManager:
         # Check if the callback is a custom callback
 
         if isinstance(callback, str):
-            callback = LoggingCallbackManager._add_custom_callback_generic_api_str(
-                callback
-            )
+            # First, try to import as a custom Python module (e.g., "custom_callbacks.conversation_callback")
+            callback = LoggingCallbackManager._import_custom_callback_module(callback)
+
+            # If still a string, check if it's a generic_api callback
+            if isinstance(callback, str):
+                callback = LoggingCallbackManager._add_custom_callback_generic_api_str(
+                    callback
+                )
 
         if isinstance(callback, str):
             self._add_string_callback_to_list(
