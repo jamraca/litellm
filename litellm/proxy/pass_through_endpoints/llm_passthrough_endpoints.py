@@ -667,11 +667,14 @@ async def anthropic_proxy_route(
     data["messages"] = request_body.get("messages", [])
 
     # Process request through LiteLLM with callbacks enabled
+    # Use anthropic_messages route type instead of allm_passthrough_route
+    # This ensures streaming callbacks are invoked for context injection
     try:
-        result = await base_llm_response_processor.base_passthrough_process_llm_request(
+        result = await base_llm_response_processor.base_process_llm_request(
             request=request,
             fastapi_response=FastAPIResponse(),
             user_api_key_dict=user_api_key_dict,
+            route_type="anthropic_messages",  # CRITICAL: Enables callback-wrapped streaming
             proxy_logging_obj=proxy_logging_obj,
             llm_router=llm_router,
             general_settings=general_settings,
