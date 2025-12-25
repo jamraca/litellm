@@ -661,6 +661,11 @@ async def anthropic_proxy_route(
     data["data"] = request_body
     data["custom_llm_provider"] = "anthropic"
 
+    # CRITICAL: Populate messages for callbacks
+    # Callbacks expect data["messages"] to extract query (see callbacks.py:328)
+    # request_body is in native Anthropic format at this point
+    data["messages"] = request_body.get("messages", [])
+
     # Process request through LiteLLM with callbacks enabled
     try:
         result = await base_llm_response_processor.base_passthrough_process_llm_request(

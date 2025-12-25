@@ -434,7 +434,8 @@ class CustomStreamWrapper:
 
     def handle_openai_chat_completion_chunk(self, chunk):
         try:
-            print_verbose(f"\nRaw OpenAI Chunk\n{chunk}\n")
+            # Removed verbose logging - was filling logs with every chunk
+            # print_verbose(f"\nRaw OpenAI Chunk\n{chunk}\n")
             str_line = chunk
             text = ""
             is_finished = False
@@ -484,7 +485,8 @@ class CustomStreamWrapper:
 
     def handle_azure_text_completion_chunk(self, chunk):
         try:
-            print_verbose(f"\nRaw OpenAI Chunk\n{chunk}\n")
+            # Removed verbose logging - was filling logs with every chunk
+            # print_verbose(f"\nRaw OpenAI Chunk\n{chunk}\n")
             text = ""
             is_finished = False
             finish_reason = None
@@ -505,7 +507,8 @@ class CustomStreamWrapper:
 
     def handle_openai_text_completion_chunk(self, chunk):
         try:
-            print_verbose(f"\nRaw OpenAI Chunk\n{chunk}\n")
+            # Removed verbose logging - was filling logs with every chunk
+            # print_verbose(f"\nRaw OpenAI Chunk\n{chunk}\n")
             text = ""
             is_finished = False
             finish_reason = None
@@ -1369,9 +1372,10 @@ class CustomStreamWrapper:
                         )
 
             model_response.model = self.model
-            print_verbose(
-                f"model_response finish reason 3: {self.received_finish_reason}; response_obj={response_obj}"
-            )
+            # Removed verbose logging - was filling logs with every chunk
+            # print_verbose(
+            #     f"model_response finish reason 3: {self.received_finish_reason}; response_obj={response_obj}"
+            # )
             ## FUNCTION CALL PARSING
             original_chunk = (
                 response_obj.get("original_chunk") if response_obj is not None else None
@@ -1465,11 +1469,13 @@ class CustomStreamWrapper:
                                 if original_chunk.choices[0].delta is None
                                 else dict(original_chunk.choices[0].delta)
                             )
-                            print_verbose(f"original delta: {delta}")
+                            # Removed verbose logging - was filling logs with every chunk
+                            # print_verbose(f"original delta: {delta}")
                             model_response.choices[0].delta = Delta(**delta)
-                            print_verbose(
-                                f"new delta: {model_response.choices[0].delta}"
-                            )
+                            # Removed verbose logging - was filling logs with every chunk
+                            # print_verbose(
+                            #     f"new delta: {model_response.choices[0].delta}"
+                            # )
                         except Exception:
                             model_response.choices[0].delta = Delta()
                 else:
