@@ -578,53 +578,116 @@ async def anthropic_proxy_route(
     user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
 ):
     """
+    Anthropic OAuth pass-through with callback support.
+
+    Uses ProxyBaseLLMRequestProcessing to enable callbacks (context injection,
+    conversation storage, outcome tracking) while maintaining OAuth support.
+
     [Docs](https://docs.litellm.ai/docs/pass_through/anthropic_completion)
     """
-    base_target_url = os.getenv("ANTHROPIC_API_BASE") or "https://api.anthropic.com"
-    encoded_endpoint = httpx.URL(endpoint).path
+    from fastapi import Response as FastAPIResponse
+    from litellm.proxy.common_request_processing import ProxyBaseLLMRequestProcessing
+    from litellm.proxy.proxy_server import (
+        general_settings,
+        llm_router,
+        proxy_config,
+        proxy_logging_obj,
+        select_data_generator,
+    )
 
-    # Ensure endpoint starts with '/' for proper URL construction
-    if not encoded_endpoint.startswith("/"):
-        encoded_endpoint = "/" + encoded_endpoint
-
-    # Construct the full target URL using httpx
-    base_url = httpx.URL(base_target_url)
-    updated_url = base_url.copy_with(path=encoded_endpoint)
-
-    # Add or update query parameters
+    # OAuth authentication handling - conditional x-api-key injection
     anthropic_api_key = passthrough_endpoint_router.get_credentials(
         custom_llm_provider="anthropic",
         region_name=None,
     )
 
-    # Only inject x-api-key if both Authorization and x-api-key headers are missing
-    # This enables OAuth pass-through while maintaining API key fallback
-    custom_headers = {}
-    if (
-        "authorization" not in request.headers
-        and "x-api-key" not in request.headers
-        and anthropic_api_key is not None
-    ):
-        custom_headers["x-api-key"] = "{}".format(anthropic_api_key)
+    has_auth_header = "authorization" in request.headers
+    has_api_key_header = "x-api-key" in request.headers
 
-    ## check for streaming
-    is_streaming_request = await is_streaming_request_fn(request)
-
-    ## CREATE PASS-THROUGH
-    endpoint_func = create_pass_through_route(
-        endpoint=endpoint,
-        target=str(updated_url),
-        custom_headers=custom_headers,
-        _forward_headers=True,
-        is_streaming_request=is_streaming_request,
-    )  # dynamically construct pass-through endpoint based on incoming path
-    received_value = await endpoint_func(
-        request,
-        fastapi_response,
-        user_api_key_dict,
+    # OAUTH DEBUG LOGGING - Track header presence and injection decisions
+    verbose_proxy_logger.info(
+        "[OAUTH_DEBUG] anthropic_proxy_route: endpoint=%s, has_authorization=%s, has_x_api_key=%s, will_inject_key=%s",
+        endpoint,
+        has_auth_header,
+        has_api_key_header,
+        not has_auth_header and not has_api_key_header and anthropic_api_key is not None,
     )
 
-    return received_value
+    if has_auth_header:
+        # Log first 20 chars of auth header for debugging (masked)
+        auth_value = request.headers.get("authorization", "")
+        verbose_proxy_logger.info(
+            "[OAUTH_DEBUG] Authorization header present: %s... (length=%d)",
+            auth_value[:20] if auth_value else "",
+            len(auth_value),
+        )
+
+    # Inject x-api-key into request headers if OAuth is missing (API key fallback)
+    # Modify request.scope['headers'] which is mutable (unlike request.headers)
+    if (
+        not has_auth_header
+        and not has_api_key_header
+        and anthropic_api_key is not None
+    ):
+        # Add x-api-key header to request scope for LiteLLM authentication
+        request.scope["headers"].append(
+            (b"x-api-key", anthropic_api_key.encode("utf-8"))
+        )
+        verbose_proxy_logger.info("[OAUTH_DEBUG] Injected x-api-key into request headers (OAuth header missing)")
+    else:
+        verbose_proxy_logger.info("[OAUTH_DEBUG] NOT injecting x-api-key - using OAuth pass-through")
+
+    # Parse request body to extract model
+    request_body = await get_request_body(request=request)
+
+    # Extract model from request body (required for ProxyBaseLLMRequestProcessing)
+    model = request_body.get("model", "claude-3-5-sonnet-20241022")  # Default fallback
+
+    # Detect streaming based on request body
+    is_streaming = request_body.get("stream", False)
+
+    verbose_proxy_logger.debug(
+        f"Anthropic OAuth passthrough: model='{model}', endpoint='{endpoint}', streaming={is_streaming}"
+    )
+
+    # Use callback-enabled processing path (same as Bedrock router models)
+    # This ensures callbacks (context injection, storage, metrics) are invoked
+    data: Dict[str, Any] = {}
+    base_llm_response_processor = ProxyBaseLLMRequestProcessing(data=data)
+
+    data["model"] = model
+    data["method"] = request.method
+    data["endpoint"] = endpoint
+    data["data"] = request_body
+    data["custom_llm_provider"] = "anthropic"
+
+    # Process request through LiteLLM with callbacks enabled
+    try:
+        result = await base_llm_response_processor.base_passthrough_process_llm_request(
+            request=request,
+            fastapi_response=FastAPIResponse(),
+            user_api_key_dict=user_api_key_dict,
+            proxy_logging_obj=proxy_logging_obj,
+            llm_router=llm_router,
+            general_settings=general_settings,
+            proxy_config=proxy_config,
+            select_data_generator=select_data_generator,
+            model=model,
+            user_model=None,
+            user_temperature=None,
+            user_request_timeout=None,
+            user_max_tokens=None,
+            user_api_base=os.getenv("ANTHROPIC_API_BASE"),
+            version=None,
+        )
+        return result
+    except Exception as e:
+        # Use common exception handling
+        raise await base_llm_response_processor._handle_llm_api_exception(
+            e=e,
+            user_api_key_dict=user_api_key_dict,
+            proxy_logging_obj=proxy_logging_obj,
+        )
 
 
 # Bedrock endpoint actions - consolidated list used for model extraction and streaming detection
