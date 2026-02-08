@@ -662,7 +662,7 @@ async def anthropic_proxy_route(
     data["model"] = model
     data["method"] = request.method
     data["endpoint"] = endpoint
-    data["data"] = request_body
+    data["json"] = request_body
     data["custom_llm_provider"] = "anthropic"
     data["request_headers"] = dict(request.headers)
 
