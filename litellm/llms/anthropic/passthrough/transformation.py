@@ -118,11 +118,13 @@ class AnthropicPassthroughConfig(BasePassthroughConfig):
         Validate and prepare headers for Anthropic API.
 
         For OAuth passthrough, client headers (including Authorization) are
-        forwarded via forward_request_headers=True. If an API key is available
-        (from config or ANTHROPIC_API_KEY env), set x-api-key as fallback.
+        forwarded via forward_request_headers=True. The x-api-key injection
+        is handled conditionally by anthropic_proxy_route - it only injects
+        x-api-key when BOTH Authorization and x-api-key headers are missing
+        from the incoming request. We must NOT inject x-api-key here, as it
+        would override OAuth tokens and cause "credential only authorized
+        for Claude Code" errors from Anthropic.
         """
-        if api_key:
-            headers["x-api-key"] = api_key
         return headers
 
     @staticmethod

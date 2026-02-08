@@ -1,0 +1,1293 @@
+diff --git a/litellm/integrations/custom_logger.py b/litellm/integrations/custom_logger.py
+index a3e67d8a73..6771999cd3 100644
+--- a/litellm/integrations/custom_logger.py
++++ b/litellm/integrations/custom_logger.py
+@@ -16,10 +16,10 @@ from typing import (
+ from pydantic import BaseModel
+ 
+ from litellm._logging import verbose_logger
+-from litellm.caching.caching import DualCache
+ from litellm.constants import DEFAULT_MAX_RECURSE_DEPTH_SENSITIVE_DATA_MASKER
+ from litellm.types.integrations.argilla import ArgillaItem
+ from litellm.types.llms.openai import AllMessageValues, ChatCompletionRequest
++from litellm.types.prompts.init_prompts import PromptSpec
+ from litellm.types.utils import (
+     AdapterCompletionStreamWrapper,
+     CallTypes,
+@@ -32,6 +32,7 @@ from litellm.types.utils import (
+ )
+ 
+ if TYPE_CHECKING:
++    from litellm.caching.caching import DualCache
+     from opentelemetry.trace import Span as _Span
+ 
+     from litellm.litellm_core_utils.litellm_logging import Logging as LiteLLMLoggingObj
+@@ -158,9 +159,12 @@ class CustomLogger:  # https://docs.litellm.ai/docs/observability/custom_callbac
+         prompt_variables: Optional[dict],
+         dynamic_callback_params: StandardCallbackDynamicParams,
+         litellm_logging_obj: LiteLLMLoggingObj,
++        prompt_spec: Optional[PromptSpec] = None,
+         tools: Optional[List[Dict]] = None,
+         prompt_label: Optional[str] = None,
+         prompt_version: Optional[int] = None,
++        ignore_prompt_manager_model: Optional[bool] = False,
++        ignore_prompt_manager_optional_params: Optional[bool] = False,
+     ) -> Tuple[str, List[AllMessageValues], dict]:
+         """
+         Returns:
+@@ -178,8 +182,11 @@ class CustomLogger:  # https://docs.litellm.ai/docs/observability/custom_callbac
+         prompt_id: Optional[str],
+         prompt_variables: Optional[dict],
+         dynamic_callback_params: StandardCallbackDynamicParams,
++        prompt_spec: Optional[PromptSpec] = None,
+         prompt_label: Optional[str] = None,
+         prompt_version: Optional[int] = None,
++        ignore_prompt_manager_model: Optional[bool] = False,
++        ignore_prompt_manager_optional_params: Optional[bool] = False,
+     ) -> Tuple[str, List[AllMessageValues], dict]:
+         """
+         Returns:
+@@ -327,7 +334,7 @@ class CustomLogger:  # https://docs.litellm.ai/docs/observability/custom_callbac
+     async def async_pre_call_hook(
+         self,
+         user_api_key_dict: UserAPIKeyAuth,
+-        cache: DualCache,
++        cache: "DualCache",
+         data: dict,
+         call_type: CallTypesLiteral,
+     ) -> Optional[
+@@ -552,8 +559,11 @@ class CustomLogger:  # https://docs.litellm.ai/docs/observability/custom_callbac
+         from copy import copy
+ 
+         from litellm import Choices, Message, ModelResponse
+-        turn_off_message_logging: bool = getattr(self, "turn_off_message_logging", False)
+-        
++
++        turn_off_message_logging: bool = getattr(
++            self, "turn_off_message_logging", False
++        )
++
+         if turn_off_message_logging is False:
+             return model_call_details
+ 
+@@ -579,6 +589,7 @@ class CustomLogger:  # https://docs.litellm.ai/docs/observability/custom_callbac
+             if isinstance(response, dict) and "output" in response:
+                 # Make a copy to avoid modifying the original
+                 from copy import deepcopy
++
+                 response_copy = deepcopy(response)
+                 # Redact content in output array
+                 if isinstance(response_copy.get("output"), list):
+@@ -587,7 +598,10 @@ class CustomLogger:  # https://docs.litellm.ai/docs/observability/custom_callbac
+                             if isinstance(output_item["content"], list):
+                                 # Redact text in content items
+                                 for content_item in output_item["content"]:
+-                                    if isinstance(content_item, dict) and "text" in content_item:
++                                    if (
++                                        isinstance(content_item, dict)
++                                        and "text" in content_item
++                                    ):
+                                         content_item["text"] = redacted_str
+                 standard_logging_object_copy["response"] = response_copy
+             else:
+@@ -615,29 +629,34 @@ class CustomLogger:  # https://docs.litellm.ai/docs/observability/custom_callbac
+     def handle_callback_failure(self, callback_name: str):
+         """
+         Handle callback logging failures by incrementing Prometheus metrics.
+-        
++
+         Call this method in exception handlers within your callback when logging fails.
+         """
+         try:
+             import litellm
+             from litellm._logging import verbose_logger
+-            
++
+             all_callbacks = litellm.logging_callback_manager._get_all_callbacks()
+-            
++
+             for callback_obj in all_callbacks:
+-                if hasattr(callback_obj, 'increment_callback_logging_failure'):
+-                    verbose_logger.debug(f"Incrementing callback failure metric for {callback_name}")
++                if hasattr(callback_obj, "increment_callback_logging_failure"):
++                    verbose_logger.debug(
++                        f"Incrementing callback failure metric for {callback_name}"
++                    )
+                     callback_obj.increment_callback_logging_failure(callback_name=callback_name)  # type: ignore
+                     return
+-            
++
+             verbose_logger.debug(
+                 f"No callback with increment_callback_logging_failure method found for {callback_name}. "
+                 "Ensure 'prometheus' is in your callbacks config."
+             )
+-                    
++
+         except Exception as e:
+             from litellm._logging import verbose_logger
+-            verbose_logger.debug(f"Error in handle_callback_failure for {callback_name}: {str(e)}")
++
++            verbose_logger.debug(
++                f"Error in handle_callback_failure for {callback_name}: {str(e)}"
++            )
+ 
+     async def _strip_base64_from_messages(
+         self,
+@@ -656,10 +675,14 @@ class CustomLogger:  # https://docs.litellm.ai/docs/observability/custom_callbac
+         """
+         raw_messages: Any = payload.get("messages", [])
+         messages: List[Any] = raw_messages if isinstance(raw_messages, list) else []
+-        verbose_logger.debug(f"[CustomLogger] Stripping base64 from {len(messages)} messages")
++        verbose_logger.debug(
++            f"[CustomLogger] Stripping base64 from {len(messages)} messages"
++        )
+ 
+         if messages:
+-            payload["messages"] = self._process_messages(messages=messages, max_depth=max_depth)
++            payload["messages"] = self._process_messages(
++                messages=messages, max_depth=max_depth
++            )
+ 
+         total_items = 0
+         for m in payload.get("messages", []) or []:
+@@ -674,7 +697,9 @@ class CustomLogger:  # https://docs.litellm.ai/docs/observability/custom_callbac
+         return payload
+ 
+     def _strip_base64_from_messages_sync(
+-            self, payload: "StandardLoggingPayload", max_depth: int = DEFAULT_MAX_RECURSE_DEPTH_SENSITIVE_DATA_MASKER
++        self,
++        payload: "StandardLoggingPayload",
++        max_depth: int = DEFAULT_MAX_RECURSE_DEPTH_SENSITIVE_DATA_MASKER,
+     ) -> "StandardLoggingPayload":
+         """
+         Removes or redacts base64-encoded file data (e.g., PDFs, images, audio)
+@@ -688,7 +713,9 @@ class CustomLogger:  # https://docs.litellm.ai/docs/observability/custom_callbac
+         """
+         raw_messages: Any = payload.get("messages", [])
+         messages: List[Any] = raw_messages if isinstance(raw_messages, list) else []
+-        verbose_logger.debug(f"[CustomLogger] Stripping base64 from {len(messages)} messages")
++        verbose_logger.debug(
++            f"[CustomLogger] Stripping base64 from {len(messages)} messages"
++        )
+ 
+         if messages:
+             payload["messages"] = self._process_messages(
+@@ -751,7 +778,11 @@ class CustomLogger:  # https://docs.litellm.ai/docs/observability/custom_callbac
+         ctype = content.get("type")
+         return not (isinstance(ctype, str) and ctype != "text")
+ 
+-    def _process_messages(self, messages: List[Any], max_depth: int = DEFAULT_MAX_RECURSE_DEPTH_SENSITIVE_DATA_MASKER) -> List[Dict[str, Any]]:
++    def _process_messages(
++        self,
++        messages: List[Any],
++        max_depth: int = DEFAULT_MAX_RECURSE_DEPTH_SENSITIVE_DATA_MASKER,
++    ) -> List[Dict[str, Any]]:
+         filtered_messages: List[Dict[str, Any]] = []
+         for msg in messages:
+             if not isinstance(msg, dict):
+diff --git a/litellm/proxy/pass_through_endpoints/llm_passthrough_endpoints.py b/litellm/proxy/pass_through_endpoints/llm_passthrough_endpoints.py
+index 7afb6868c7..88c4fbc882 100644
+--- a/litellm/proxy/pass_through_endpoints/llm_passthrough_endpoints.py
++++ b/litellm/proxy/pass_through_endpoints/llm_passthrough_endpoints.py
+@@ -382,7 +382,7 @@ async def mistral_proxy_route(
+     user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+ ):
+     """
+-    [Docs](https://docs.litellm.ai/docs/anthropic_completion)
++    [Docs](https://docs.litellm.ai/docs/pass_through/mistral)
+     """
+     base_target_url = os.getenv("MISTRAL_API_BASE") or "https://api.mistral.ai"
+     encoded_endpoint = httpx.URL(endpoint).path
+@@ -578,43 +578,121 @@ async def anthropic_proxy_route(
+     user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+ ):
+     """
+-    [Docs](https://docs.litellm.ai/docs/anthropic_completion)
+-    """
+-    base_target_url = os.getenv("ANTHROPIC_API_BASE") or "https://api.anthropic.com"
+-    encoded_endpoint = httpx.URL(endpoint).path
++    Anthropic OAuth pass-through with callback support.
+ 
+-    # Ensure endpoint starts with '/' for proper URL construction
+-    if not encoded_endpoint.startswith("/"):
+-        encoded_endpoint = "/" + encoded_endpoint
++    Uses ProxyBaseLLMRequestProcessing to enable callbacks (context injection,
++    conversation storage, outcome tracking) while maintaining OAuth support.
+ 
+-    # Construct the full target URL using httpx
+-    base_url = httpx.URL(base_target_url)
+-    updated_url = base_url.copy_with(path=encoded_endpoint)
++    [Docs](https://docs.litellm.ai/docs/pass_through/anthropic_completion)
++    """
++    from fastapi import Response as FastAPIResponse
++    from litellm.proxy.common_request_processing import ProxyBaseLLMRequestProcessing
++    from litellm.proxy.proxy_server import (
++        general_settings,
++        llm_router,
++        proxy_config,
++        proxy_logging_obj,
++        select_data_generator,
++    )
+ 
+-    # Add or update query parameters
++    # OAuth authentication handling - conditional x-api-key injection
+     anthropic_api_key = passthrough_endpoint_router.get_credentials(
+         custom_llm_provider="anthropic",
+         region_name=None,
+     )
+ 
+-    ## check for streaming
+-    is_streaming_request = await is_streaming_request_fn(request)
++    has_auth_header = "authorization" in request.headers
++    has_api_key_header = "x-api-key" in request.headers
+ 
+-    ## CREATE PASS-THROUGH
+-    endpoint_func = create_pass_through_route(
+-        endpoint=endpoint,
+-        target=str(updated_url),
+-        custom_headers={"x-api-key": "{}".format(anthropic_api_key)},
+-        _forward_headers=True,
+-        is_streaming_request=is_streaming_request,
+-    )  # dynamically construct pass-through endpoint based on incoming path
+-    received_value = await endpoint_func(
+-        request,
+-        fastapi_response,
+-        user_api_key_dict,
++    # OAUTH DEBUG LOGGING - Track header presence and injection decisions
++    verbose_proxy_logger.info(
++        "[OAUTH_DEBUG] anthropic_proxy_route: endpoint=%s, has_authorization=%s, has_x_api_key=%s, will_inject_key=%s",
++        endpoint,
++        has_auth_header,
++        has_api_key_header,
++        not has_auth_header and not has_api_key_header and anthropic_api_key is not None,
+     )
+ 
+-    return received_value
++    if has_auth_header:
++        # Log first 20 chars of auth header for debugging (masked)
++        auth_value = request.headers.get("authorization", "")
++        verbose_proxy_logger.info(
++            "[OAUTH_DEBUG] Authorization header present: %s... (length=%d)",
++            auth_value[:20] if auth_value else "",
++            len(auth_value),
++        )
++
++    # Inject x-api-key into request headers if OAuth is missing (API key fallback)
++    # Modify request.scope['headers'] which is mutable (unlike request.headers)
++    if (
++        not has_auth_header
++        and not has_api_key_header
++        and anthropic_api_key is not None
++    ):
++        # Add x-api-key header to request scope for LiteLLM authentication
++        request.scope["headers"].append(
++            (b"x-api-key", anthropic_api_key.encode("utf-8"))
++        )
++        verbose_proxy_logger.info("[OAUTH_DEBUG] Injected x-api-key into request headers (OAuth header missing)")
++    else:
++        verbose_proxy_logger.info("[OAUTH_DEBUG] NOT injecting x-api-key - using OAuth pass-through")
++
++    # Parse request body to extract model
++    request_body = await get_request_body(request=request)
++
++    # Extract model from request body (required for ProxyBaseLLMRequestProcessing)
++    model = request_body.get("model", "claude-3-5-sonnet-20241022")  # Default fallback
++
++    # Detect streaming based on request body
++    is_streaming = request_body.get("stream", False)
++
++    verbose_proxy_logger.debug(
++        f"Anthropic OAuth passthrough: model='{model}', endpoint='{endpoint}', streaming={is_streaming}"
++    )
++
++    # Use callback-enabled processing path (same as Bedrock router models)
++    # This ensures callbacks (context injection, storage, metrics) are invoked
++    data: Dict[str, Any] = {}
++    base_llm_response_processor = ProxyBaseLLMRequestProcessing(data=data)
++
++    data["model"] = model
++    data["method"] = request.method
++    data["endpoint"] = endpoint
++    data["data"] = request_body
++    data["custom_llm_provider"] = "anthropic"
++
++    # CRITICAL: Populate messages for callbacks
++    # Callbacks expect data["messages"] to extract query (see callbacks.py:328)
++    # request_body is in native Anthropic format at this point
++    data["messages"] = request_body.get("messages", [])
++
++    # Process request through LiteLLM with callbacks enabled
++    try:
++        result = await base_llm_response_processor.base_passthrough_process_llm_request(
++            request=request,
++            fastapi_response=FastAPIResponse(),
++            user_api_key_dict=user_api_key_dict,
++            proxy_logging_obj=proxy_logging_obj,
++            llm_router=llm_router,
++            general_settings=general_settings,
++            proxy_config=proxy_config,
++            select_data_generator=select_data_generator,
++            model=model,
++            user_model=None,
++            user_temperature=None,
++            user_request_timeout=None,
++            user_max_tokens=None,
++            user_api_base=os.getenv("ANTHROPIC_API_BASE"),
++            version=None,
++        )
++        return result
++    except Exception as e:
++        # Use common exception handling
++        raise await base_llm_response_processor._handle_llm_api_exception(
++            e=e,
++            user_api_key_dict=user_api_key_dict,
++            proxy_logging_obj=proxy_logging_obj,
++        )
+ 
+ 
+ # Bedrock endpoint actions - consolidated list used for model extraction and streaming detection
+diff --git a/litellm/proxy/pass_through_endpoints/llm_provider_handlers/anthropic_passthrough_logging_handler.py b/litellm/proxy/pass_through_endpoints/llm_provider_handlers/anthropic_passthrough_logging_handler.py
+index 9b6e22b819..4e1112329e 100644
+--- a/litellm/proxy/pass_through_endpoints/llm_provider_handlers/anthropic_passthrough_logging_handler.py
++++ b/litellm/proxy/pass_through_endpoints/llm_provider_handlers/anthropic_passthrough_logging_handler.py
+@@ -1,6 +1,6 @@
+ import json
+ from datetime import datetime
+-from typing import TYPE_CHECKING, Any, List, Optional, Union, cast
++from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Union, cast
+ 
+ import httpx
+ 
+@@ -16,11 +16,12 @@ from litellm.proxy.auth.auth_utils import get_end_user_id_from_request_body
+ from litellm.types.passthrough_endpoints.pass_through_endpoints import (
+     PassthroughStandardLoggingPayload,
+ )
+-from litellm.types.utils import ModelResponse, TextCompletionResponse
++from litellm.types.utils import LiteLLMBatch, ModelResponse, TextCompletionResponse
+ 
+ if TYPE_CHECKING:
+-    from ..success_handler import PassThroughEndpointLogging
+     from litellm.types.passthrough_endpoints.pass_through_endpoints import EndpointType
++
++    from ..success_handler import PassThroughEndpointLogging
+ else:
+     PassThroughEndpointLogging = Any
+     EndpointType = Any
+@@ -37,11 +38,28 @@ class AnthropicPassthroughLoggingHandler:
+         start_time: datetime,
+         end_time: datetime,
+         cache_hit: bool,
++        request_body: Optional[dict] = None,
+         **kwargs,
+     ) -> PassThroughEndpointLoggingTypedDict:
+         """
+         Transforms Anthropic response to OpenAI response, generates a standard logging object so downstream logging can be handled
+         """
++        # Check if this is a batch creation request
++        if "/v1/messages/batches" in url_route and httpx_response.status_code == 200:
++            # Get request body from parameter or kwargs
++            request_body = request_body or kwargs.get("request_body", {})
++            return AnthropicPassthroughLoggingHandler.batch_creation_handler(
++                httpx_response=httpx_response,
++                logging_obj=logging_obj,
++                url_route=url_route,
++                result=result,
++                start_time=start_time,
++                end_time=end_time,
++                cache_hit=cache_hit,
++                request_body=request_body,
++                **kwargs,
++            )
++        
+         model = response_body.get("model", "")
+         anthropic_config = get_anthropic_config(url_route)
+         litellm_model_response: ModelResponse = anthropic_config().transform_response(
+@@ -96,9 +114,20 @@ class AnthropicPassthroughLoggingHandler:
+         handles streaming and non-streaming responses
+         """
+         try:
++            # Get custom_llm_provider from logging object if available (e.g., azure_ai for Azure Anthropic)
++            custom_llm_provider = logging_obj.model_call_details.get(
++                "custom_llm_provider"
++            )
++
++            # Prepend custom_llm_provider to model if not already present
++            model_for_cost = model
++            if custom_llm_provider and not model.startswith(f"{custom_llm_provider}/"):
++                model_for_cost = f"{custom_llm_provider}/{model}"
++
+             response_cost = litellm.completion_cost(
+                 completion_response=litellm_model_response,
+-                model=model,
++                model=model_for_cost,
++                custom_llm_provider=custom_llm_provider,
+             )
+ 
+             kwargs["response_cost"] = response_cost
+@@ -157,19 +186,14 @@ class AnthropicPassthroughLoggingHandler:
+         """
+ 
+         model = request_body.get("model", "")
+-        # Dheck if it's available in the logging object
++        # Check if it's available in the logging object
+         if (
+             not model
+             and hasattr(litellm_logging_obj, "model_call_details")
+             and litellm_logging_obj.model_call_details.get("model")
+         ):
+             model = cast(str, litellm_logging_obj.model_call_details.get("model"))
+-            custom_llm_provider = litellm_logging_obj.model_call_details.get(
+-                "custom_llm_provider"
+-            )
+ 
+-            if custom_llm_provider and not model.startswith(custom_llm_provider):
+-                model = f"{custom_llm_provider}/{model}"
+         complete_streaming_response = (
+             AnthropicPassthroughLoggingHandler._build_complete_streaming_response(
+                 all_chunks=all_chunks,
+@@ -199,36 +223,364 @@ class AnthropicPassthroughLoggingHandler:
+             "kwargs": kwargs,
+         }
+ 
++    @staticmethod
++    def _split_sse_chunk_into_events(chunk: Union[str, bytes]) -> List[str]:
++        """
++        Split a chunk that may contain multiple SSE events into individual events.
++
++        SSE format: "event: type\ndata: {...}\n\n"
++        Multiple events in a single chunk are separated by double newlines.
++
++        Args:
++            chunk: Raw chunk string that may contain multiple SSE events
++
++        Returns:
++            List of individual SSE event strings (each containing "event: X\ndata: {...}")
++        """
++        # Handle bytes input
++        if isinstance(chunk, bytes):
++            chunk = chunk.decode("utf-8")
++
++        # Split on double newlines to separate SSE events
++        # Filter out empty strings
++        events = [event.strip() for event in chunk.split("\n\n") if event.strip()]
++
++        return events
++
+     @staticmethod
+     def _build_complete_streaming_response(
+-        all_chunks: List[str],
++        all_chunks: Sequence[Union[str, bytes]],
+         litellm_logging_obj: LiteLLMLoggingObj,
+         model: str,
+     ) -> Optional[Union[ModelResponse, TextCompletionResponse]]:
+         """
+         Builds complete response from raw Anthropic chunks
+ 
++        - Splits multi-event chunks into individual SSE events
+         - Converts str chunks to generic chunks
+         - Converts generic chunks to litellm chunks (OpenAI format)
+         - Builds complete response from litellm chunks
+         """
++        verbose_proxy_logger.debug(
++            "Building complete streaming response from %d chunks", len(all_chunks)
++        )
+         anthropic_model_response_iterator = AnthropicModelResponseIterator(
+             streaming_response=None,
+             sync_stream=False,
+         )
+         all_openai_chunks = []
++
++        # Process each chunk - a chunk may contain multiple SSE events
+         for _chunk_str in all_chunks:
+-            try:
+-                transformed_openai_chunk = anthropic_model_response_iterator.convert_str_chunk_to_generic_chunk(
+-                    chunk=_chunk_str
++            # Split chunk into individual SSE events
++            individual_events = (
++                AnthropicPassthroughLoggingHandler._split_sse_chunk_into_events(
++                    _chunk_str
+                 )
+-                if transformed_openai_chunk is not None:
+-                    all_openai_chunks.append(transformed_openai_chunk)
++            )
++
++            # Process each individual event
++            for event_str in individual_events:
++                try:
++                    transformed_openai_chunk = anthropic_model_response_iterator.convert_str_chunk_to_generic_chunk(
++                        chunk=event_str
++                    )
++                    if transformed_openai_chunk is not None:
++                        all_openai_chunks.append(transformed_openai_chunk)
++
++                except (StopIteration, StopAsyncIteration):
++                    break
+ 
+-            except (StopIteration, StopAsyncIteration):
+-                break
+         complete_streaming_response = litellm.stream_chunk_builder(
+             chunks=all_openai_chunks,
+             logging_obj=litellm_logging_obj,
+         )
++        verbose_proxy_logger.debug(
++            "Complete streaming response built: %s", complete_streaming_response
++        )
+         return complete_streaming_response
++
++    @staticmethod
++    def batch_creation_handler(  # noqa: PLR0915
++        httpx_response: httpx.Response,
++        logging_obj: LiteLLMLoggingObj,
++        url_route: str,
++        result: str,
++        start_time: datetime,
++        end_time: datetime,
++        cache_hit: bool,
++        request_body: Optional[dict] = None,
++        **kwargs,
++    ) -> PassThroughEndpointLoggingTypedDict:
++        """
++        Handle Anthropic batch creation passthrough logging.
++        Creates a managed object for cost tracking when batch job is successfully created.
++        """
++        import base64
++
++        from litellm._uuid import uuid
++        from litellm.llms.anthropic.batches.transformation import (
++            AnthropicBatchesConfig,
++        )
++        from litellm.types.utils import Choices, SpecialEnums
++
++        try:
++            _json_response = httpx_response.json()
++            
++            
++            # Only handle successful batch job creation (POST requests with 201 status)
++            if httpx_response.status_code == 200 and "id" in _json_response:
++                # Transform Anthropic response to LiteLLM batch format
++                anthropic_batches_config = AnthropicBatchesConfig()
++                litellm_batch_response = anthropic_batches_config.transform_retrieve_batch_response(
++                    model=None,
++                    raw_response=httpx_response,
++                    logging_obj=logging_obj,
++                    litellm_params={},
++                )
++                # Set status to "validating" for newly created batches so polling mechanism picks them up
++                # The polling mechanism only looks for status="validating" jobs
++                litellm_batch_response.status = "validating"
++                
++                # Extract batch ID from the response
++                batch_id = _json_response.get("id", "")
++                
++                # Get model from request body (batch response doesn't include model)
++                request_body = request_body or {}
++                # Try to extract model from the batch request body, supporting Anthropic's nested structure
++                model_name: str = "unknown"
++                if isinstance(request_body, dict):
++                    # Standard: {"model": ...}
++                    model_name = request_body.get("model") or "unknown"
++                    if model_name == "unknown":
++                        # Anthropic batches: look under requests[0].params.model
++                        requests_list = request_body.get("requests", [])
++                        if isinstance(requests_list, list) and len(requests_list) > 0:
++                            first_req = requests_list[0]
++                            if isinstance(first_req, dict):
++                                params = first_req.get("params", {})
++                                if isinstance(params, dict):
++                                    extracted_model = params.get("model")
++                                    if extracted_model:
++                                        model_name = extracted_model
++                
++                
++                # Create unified object ID for tracking
++                # Format: base64(litellm_proxy;model_id:{};llm_batch_id:{})
++                # For Anthropic passthrough, prefix model with "anthropic/" so router can determine provider
++                actual_model_id = AnthropicPassthroughLoggingHandler.get_actual_model_id_from_router(model_name)
++                
++                # If model not in router, use "anthropic/{model_name}" format so router can determine provider
++                if actual_model_id == model_name and not actual_model_id.startswith("anthropic/"):
++                    actual_model_id = f"anthropic/{model_name}"
++
++                unified_id_string = SpecialEnums.LITELLM_MANAGED_BATCH_COMPLETE_STR.value.format(actual_model_id, batch_id)
++                unified_object_id = base64.urlsafe_b64encode(unified_id_string.encode()).decode().rstrip("=")
++                
++                # Store the managed object for cost tracking
++                # This will be picked up by check_batch_cost polling mechanism
++                AnthropicPassthroughLoggingHandler._store_batch_managed_object(
++                    unified_object_id=unified_object_id,
++                    batch_object=litellm_batch_response,
++                    model_object_id=batch_id,
++                    logging_obj=logging_obj,
++                    **kwargs,
++                )
++                
++                # Create a batch job response for logging
++                litellm_model_response = ModelResponse()
++                litellm_model_response.id = str(uuid.uuid4())
++                litellm_model_response.model = model_name
++                litellm_model_response.object = "batch"
++                litellm_model_response.created = int(start_time.timestamp())
++                
++                # Add batch-specific metadata to indicate this is a pending batch job
++                litellm_model_response.choices = [Choices(
++                    finish_reason="batch_pending",
++                    index=0,
++                    message={
++                        "role": "assistant",
++                        "content": f"Batch job {batch_id} created and is pending. Status will be updated when the batch completes.",
++                        "tool_calls": None,
++                        "function_call": None,
++                        "provider_specific_fields": {
++                            "batch_job_id": batch_id,
++                            "batch_job_state": "in_progress",
++                            "unified_object_id": unified_object_id
++                        }
++                    }
++                )]
++                
++                # Set response cost to 0 initially (will be updated when batch completes)
++                response_cost = 0.0
++                kwargs["response_cost"] = response_cost
++                kwargs["model"] = model_name
++                kwargs["batch_id"] = batch_id
++                kwargs["unified_object_id"] = unified_object_id
++                kwargs["batch_job_state"] = "in_progress"
++                
++                logging_obj.model = model_name
++                logging_obj.model_call_details["model"] = logging_obj.model
++                logging_obj.model_call_details["response_cost"] = response_cost
++                logging_obj.model_call_details["batch_id"] = batch_id
++                
++                return {
++                    "result": litellm_model_response,
++                    "kwargs": kwargs,
++                }
++            else:
++                # Handle non-successful responses
++                litellm_model_response = ModelResponse()
++                litellm_model_response.id = str(uuid.uuid4())
++                litellm_model_response.model = "anthropic_batch"
++                litellm_model_response.object = "batch"
++                litellm_model_response.created = int(start_time.timestamp())
++                
++                # Add error-specific metadata
++                litellm_model_response.choices = [Choices(
++                    finish_reason="batch_error",
++                    index=0,
++                    message={
++                        "role": "assistant",
++                        "content": f"Batch job creation failed. Status: {httpx_response.status_code}",
++                        "tool_calls": None,
++                        "function_call": None,
++                        "provider_specific_fields": {
++                            "batch_job_state": "failed",
++                            "status_code": httpx_response.status_code
++                        }
++                    }
++                )]
++                
++                kwargs["response_cost"] = 0.0
++                kwargs["model"] = "anthropic_batch"
++                kwargs["batch_job_state"] = "failed"
++                
++                return {
++                    "result": litellm_model_response,
++                    "kwargs": kwargs,
++                }
++                
++        except Exception as e:
++            verbose_proxy_logger.error(f"Error in batch_creation_handler: {e}")
++            # Return basic response on error
++            litellm_model_response = ModelResponse()
++            litellm_model_response.id = str(uuid.uuid4())
++            litellm_model_response.model = "anthropic_batch"
++            litellm_model_response.object = "batch"
++            litellm_model_response.created = int(start_time.timestamp())
++            
++            # Add error-specific metadata
++            litellm_model_response.choices = [Choices(
++                finish_reason="batch_error",
++                index=0,
++                message={
++                    "role": "assistant",
++                    "content": f"Error creating batch job: {str(e)}",
++                    "tool_calls": None,
++                    "function_call": None,
++                    "provider_specific_fields": {
++                        "batch_job_state": "failed",
++                        "error": str(e)
++                    }
++                }
++            )]
++            
++            kwargs["response_cost"] = 0.0
++            kwargs["model"] = "anthropic_batch"
++            kwargs["batch_job_state"] = "failed"
++            
++            return {
++                "result": litellm_model_response,
++                "kwargs": kwargs,
++            }
++
++    @staticmethod
++    def _store_batch_managed_object(
++        unified_object_id: str,
++        batch_object: LiteLLMBatch,
++        model_object_id: str,
++        logging_obj: LiteLLMLoggingObj,
++        **kwargs,
++    ) -> None:
++        """
++        Store batch managed object for cost tracking.
++        This will be picked up by the check_batch_cost polling mechanism.
++        """
++        try:
++            
++            # Get the managed files hook from the logging object
++            # This is a bit of a hack, but we need access to the proxy logging system
++            from litellm.proxy.proxy_server import proxy_logging_obj
++            
++            managed_files_hook = proxy_logging_obj.get_proxy_hook("managed_files")
++            if managed_files_hook is not None and hasattr(managed_files_hook, 'store_unified_object_id'):
++                # Create a mock user API key dict for the managed object storage
++                from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
++                user_api_key_dict = UserAPIKeyAuth(
++                    user_id=kwargs.get("user_id", "default-user"),
++                    api_key="",
++                    team_id=None,
++                    team_alias=None,
++                    user_role=LitellmUserRoles.CUSTOMER,  # Use proper enum value
++                    user_email=None,
++                    max_budget=None,
++                    spend=0.0,  # Set to 0.0 instead of None
++                    models=[],  # Set to empty list instead of None
++                    tpm_limit=None,
++                    rpm_limit=None,
++                    budget_duration=None,
++                    budget_reset_at=None,
++                    max_parallel_requests=None,
++                    allowed_model_region=None,
++                    metadata={},  # Set to empty dict instead of None
++                    key_alias=None,
++                    permissions={},  # Set to empty dict instead of None
++                    model_max_budget={},  # Set to empty dict instead of None
++                    model_spend={},  # Set to empty dict instead of None
++                )
++                
++                # Store the unified object for batch cost tracking
++                import asyncio
++                asyncio.create_task(
++                    managed_files_hook.store_unified_object_id(  # type: ignore
++                        unified_object_id=unified_object_id,
++                        file_object=batch_object,
++                        litellm_parent_otel_span=None,
++                        model_object_id=model_object_id,
++                        file_purpose="batch",
++                        user_api_key_dict=user_api_key_dict,
++                    )
++                )
++                
++                verbose_proxy_logger.info(
++                    f"Stored Anthropic batch managed object with unified_object_id={unified_object_id}, batch_id={model_object_id}"
++                )
++            else:
++                verbose_proxy_logger.warning("Managed files hook not available, cannot store batch object for cost tracking")
++                
++        except Exception as e:
++            verbose_proxy_logger.error(f"Error storing Anthropic batch managed object: {e}")
++
++    @staticmethod
++    def get_actual_model_id_from_router(model_name: str) -> str:
++        from litellm.proxy.proxy_server import llm_router
++        
++        if llm_router is not None:
++            # Try to find the model in the router by the model name
++            # Use the existing get_model_ids method from router
++            model_ids = llm_router.get_model_ids(model_name=model_name)
++            if model_ids and len(model_ids) > 0:
++                # Use the first model ID found
++                actual_model_id = model_ids[0]
++                verbose_proxy_logger.info(f"Found model ID in router: {actual_model_id}")
++                return actual_model_id
++            else:
++                # Fallback to model name
++                actual_model_id = model_name
++                verbose_proxy_logger.warning(f"Model not found in router, using model name: {actual_model_id}")
++                return actual_model_id
++        else:
++            # Fallback if router is not available
++            verbose_proxy_logger.warning(f"Router not available, using model name: {model_name}")
++            return model_name
+diff --git a/litellm/proxy/pass_through_endpoints/success_handler.py b/litellm/proxy/pass_through_endpoints/success_handler.py
+index 6d93ef68df..41b92c5611 100644
+--- a/litellm/proxy/pass_through_endpoints/success_handler.py
++++ b/litellm/proxy/pass_through_endpoints/success_handler.py
+@@ -46,7 +46,7 @@ class PassThroughEndpointLogging:
+         ]
+ 
+         # Anthropic
+-        self.TRACKED_ANTHROPIC_ROUTES = ["/messages"]
++        self.TRACKED_ANTHROPIC_ROUTES = ["/messages", "/v1/messages/batches"]
+ 
+         # Cohere
+         self.TRACKED_COHERE_ROUTES = ["/v2/chat", "/v1/embed"]
+@@ -169,6 +169,7 @@ class PassThroughEndpointLogging:
+                     start_time=start_time,
+                     end_time=end_time,
+                     cache_hit=cache_hit,
++                    request_body=request_body,
+                     **kwargs,
+                 )
+             )
+diff --git a/litellm/proxy/utils.py b/litellm/proxy/utils.py
+index 81d709c332..275baa88da 100644
+--- a/litellm/proxy/utils.py
++++ b/litellm/proxy/utils.py
+@@ -65,7 +65,7 @@ from litellm.integrations.SlackAlerting.utils import _add_langfuse_trace_id_to_a
+ from litellm.litellm_core_utils.litellm_logging import Logging
+ from litellm.litellm_core_utils.safe_json_dumps import safe_dumps
+ from litellm.litellm_core_utils.safe_json_loads import safe_json_loads
+-from litellm.llms.custom_httpx.httpx_handler import HTTPHandler
++from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
+ from litellm.proxy._types import (
+     AlertType,
+     CallInfo,
+@@ -824,16 +824,22 @@ class ProxyLogging:
+ 
+         return data
+ 
+-    def _process_prompt_template(
+-        self, data: dict, litellm_logging_obj: Any, prompt_id: Any, prompt_version: Any, call_type: CallTypesLiteral
++    async def _process_prompt_template(
++        self,
++        data: dict,
++        litellm_logging_obj: Any,
++        prompt_id: Any,
++        prompt_version: Any,
++        call_type: CallTypesLiteral,
+     ) -> None:
+         """Process prompt template if applicable."""
+-        from litellm.utils import get_non_default_completion_params
++
+         from litellm.proxy.prompts.prompt_endpoints import (
+             construct_versioned_prompt_id,
+             get_latest_version_prompt_id,
+         )
+         from litellm.proxy.prompts.prompt_registry import IN_MEMORY_PROMPT_REGISTRY
++        from litellm.utils import get_non_default_completion_params
+ 
+         if prompt_version is None:
+             lookup_prompt_id = get_latest_version_prompt_id(
+@@ -852,53 +858,71 @@ class ProxyLogging:
+         litellm_prompt_id: Optional[str] = None
+         if prompt_spec is not None:
+             litellm_prompt_id = prompt_spec.litellm_params.prompt_id
++            data.pop("prompt_id", None)
++
++        if custom_logger and prompt_spec is not None:
+ 
+-        if custom_logger and litellm_prompt_id is not None:
+             (
+                 model,
+                 messages,
+                 optional_params,
+-            ) = litellm_logging_obj.get_chat_completion_prompt(
++            ) = await litellm_logging_obj.async_get_chat_completion_prompt(
+                 model=data.get("model", ""),
+                 messages=data.get("messages", []),
+-                non_default_params=get_non_default_completion_params(kwargs=data),
++                non_default_params=get_non_default_completion_params(kwargs=data) or {},
+                 prompt_id=litellm_prompt_id,
++                prompt_spec=prompt_spec,
+                 prompt_management_logger=custom_logger,
+-                prompt_variables=data.get("prompt_variables", None),
+-                prompt_label=data.get("prompt_label", None),
+-                prompt_version=data.get("prompt_version", None),
++                prompt_variables=data.pop("prompt_variables", None) or {},
++                prompt_label=data.pop("prompt_label", None) or {},
++                prompt_version=data.pop("prompt_version", None) or {},
+             )
+ 
+             data.update(optional_params)
+             data["model"] = model
+             data["messages"] = messages
++            # prevent re-processing the prompt template
++            data.pop("prompt_id", None)
++            data.pop("prompt_variables", None)
++            data.pop("prompt_label", None)
++            data.pop("prompt_version", None)
+ 
+     def _process_guardrail_metadata(self, data: dict) -> None:
+         """Process guardrails from metadata and add to applied_guardrails."""
+         from litellm.proxy.common_utils.callback_utils import (
+             add_guardrail_to_applied_guardrails_header,
+         )
++
+         metadata_standard = data.get("metadata") or {}
+         metadata_litellm = data.get("litellm_metadata") or {}
+-        
++
+         guardrails_in_metadata = []
+         if isinstance(metadata_standard, dict) and "guardrails" in metadata_standard:
+             guardrails_in_metadata = metadata_standard.get("guardrails", [])
+         elif isinstance(metadata_litellm, dict) and "guardrails" in metadata_litellm:
+             guardrails_in_metadata = metadata_litellm.get("guardrails", [])
+-        
++
+         if guardrails_in_metadata and isinstance(guardrails_in_metadata, list):
+             applied_guardrails = []
+-            if isinstance(metadata_standard, dict) and "applied_guardrails" in metadata_standard:
++            if (
++                isinstance(metadata_standard, dict)
++                and "applied_guardrails" in metadata_standard
++            ):
+                 applied_guardrails = metadata_standard.get("applied_guardrails", [])
+-            elif isinstance(metadata_litellm, dict) and "applied_guardrails" in metadata_litellm:
++            elif (
++                isinstance(metadata_litellm, dict)
++                and "applied_guardrails" in metadata_litellm
++            ):
+                 applied_guardrails = metadata_litellm.get("applied_guardrails", [])
+-            
++
+             if not isinstance(applied_guardrails, list):
+                 applied_guardrails = []
+-            
++
+             for guardrail_name in guardrails_in_metadata:
+-                if isinstance(guardrail_name, str) and guardrail_name not in applied_guardrails:
++                if (
++                    isinstance(guardrail_name, str)
++                    and guardrail_name not in applied_guardrails
++                ):
+                     add_guardrail_to_applied_guardrails_header(
+                         request_data=data, guardrail_name=guardrail_name
+                     )
+@@ -950,12 +974,13 @@ class ProxyLogging:
+         prompt_version = data.get("prompt_version", None)
+ 
+         ## PROMPT TEMPLATE CHECK ##
++
+         if (
+             litellm_logging_obj is not None
+             and prompt_id is not None
+             and (call_type == "completion" or call_type == "acompletion")
+         ):
+-            self._process_prompt_template(
++            await self._process_prompt_template(
+                 data=data,
+                 litellm_logging_obj=litellm_logging_obj,
+                 prompt_id=prompt_id,
+@@ -980,7 +1005,7 @@ class ProxyLogging:
+                 ):
+                     result = await self._process_guardrail_callback(
+                         callback=_callback,
+-                        data=data,
++                        data=data,  # type: ignore
+                         user_api_key_dict=user_api_key_dict,
+                         call_type=call_type,
+                     )
+@@ -1022,10 +1047,10 @@ class ProxyLogging:
+                         start_time=start_time,
+                         end_time=end_time,
+                     )
+-            
++
+             if data is not None:
+                 self._process_guardrail_metadata(data)
+-            
++
+             return data
+         except Exception as e:
+             raise e
+@@ -1602,7 +1627,7 @@ class ProxyLogging:
+                     raise e
+         return response
+ 
+-    def async_post_call_streaming_iterator_hook(
++    async def async_post_call_streaming_iterator_hook(
+         self,
+         response,
+         user_api_key_dict: UserAPIKeyAuth,
+@@ -1615,6 +1640,7 @@ class ProxyLogging:
+         Covers:
+         1. /chat/completions
+         """
++        current_response = response
+ 
+         for callback in litellm.callbacks:
+ 
+@@ -1631,23 +1657,27 @@ class ProxyLogging:
+                 ) or _callback.should_run_guardrail(
+                     data=request_data, event_type=GuardrailEventHooks.post_call
+                 ):
+-
+                     if "apply_guardrail" in type(callback).__dict__:
+                         request_data["guardrail_to_apply"] = callback
+-                        response = (
++                        current_response = (
+                             unified_guardrail.async_post_call_streaming_iterator_hook(
+                                 user_api_key_dict=user_api_key_dict,
+                                 request_data=request_data,
+-                                response=response,
++                                response=current_response,
+                             )
+                         )
+                     else:
+-                        response = _callback.async_post_call_streaming_iterator_hook(
+-                            user_api_key_dict=user_api_key_dict,
+-                            response=response,
+-                            request_data=request_data,
++                        current_response = (
++                            _callback.async_post_call_streaming_iterator_hook(
++                                user_api_key_dict=user_api_key_dict,
++                                response=current_response,
++                                request_data=request_data,
++                            )
+                         )
+-        return response
++
++        # Actually iterate through the chained async generator and yield chunks
++        async for chunk in current_response:
++            yield chunk
+ 
+     def _init_response_taking_too_long_task(self, data: Optional[dict] = None):
+         """
+@@ -1690,6 +1720,7 @@ def jsonify_object(data: dict) -> dict:
+ 
+ class PrismaClient:
+     spend_log_transactions: List = []
++    _spend_log_transactions_lock = asyncio.Lock()
+ 
+     def __init__(
+         self,
+@@ -3143,7 +3174,7 @@ class PrismaClient:
+                     key = (check.model_id, check.model_name)
+                 else:
+                     key = (None, check.model_name)
+-                
++
+                 # Only add if we haven't seen this key yet (since checks are ordered by checked_at desc)
+                 if key not in latest_checks:
+                     latest_checks[key] = check
+@@ -3322,15 +3353,20 @@ class ProxyUpdateSpend:
+     async def update_spend_logs(
+         n_retry_times: int,
+         prisma_client: PrismaClient,
+-        db_writer_client: Optional[HTTPHandler],
++        db_writer_client: Optional[AsyncHTTPHandler],
+         proxy_logging_obj: ProxyLogging,
+     ):
+-        BATCH_SIZE = 100  # Preferred size of each batch to write to the database
++        BATCH_SIZE = 1000  # Preferred size of each batch to write to the database
+         MAX_LOGS_PER_INTERVAL = (
+-            1000  # Maximum number of logs to flush in a single interval
++            10000  # Maximum number of logs to flush in a single interval
+         )
+-        # Get initial logs to process
+-        logs_to_process = prisma_client.spend_log_transactions[:MAX_LOGS_PER_INTERVAL]
++        # Atomically read and remove logs to process (protected by lock)
++        async with prisma_client._spend_log_transactions_lock:
++            logs_to_process = prisma_client.spend_log_transactions[:MAX_LOGS_PER_INTERVAL]
++            # Remove the logs we're about to process
++            prisma_client.spend_log_transactions = (
++                prisma_client.spend_log_transactions[len(logs_to_process):]
++            )
+         start_time = time.time()
+         try:
+             for i in range(n_retry_times + 1):
+@@ -3344,17 +3380,16 @@ class ProxyUpdateSpend:
+                         if not base_url.endswith("/"):
+                             base_url += "/"
+                         verbose_proxy_logger.debug("base_url: {}".format(base_url))
++                        json_data = json.dumps(logs_to_process)
+                         response = await db_writer_client.post(
+                             url=base_url + "spend/update",
+-                            data=json.dumps(logs_to_process),
++                            data=json_data,
+                             headers={"Content-Type": "application/json"},
+                         )
++                        del json_data
+                         if response.status_code == 200:
+-                            prisma_client.spend_log_transactions = (
+-                                prisma_client.spend_log_transactions[
+-                                    len(logs_to_process) :
+-                                ]
+-                            )
++                            # Items already removed from queue at start of function
++                            pass
+                     else:
+                         for j in range(0, len(logs_to_process), BATCH_SIZE):
+                             batch = logs_to_process[j : j + BATCH_SIZE]
+@@ -3368,12 +3403,14 @@ class ProxyUpdateSpend:
+                             verbose_proxy_logger.debug(
+                                 f"Flushed {len(batch)} logs to the DB."
+                             )
++                            # Explicitly clear batch memory
++                            del batch, batch_with_dates
+ 
+-                        prisma_client.spend_log_transactions = (
+-                            prisma_client.spend_log_transactions[len(logs_to_process) :]
+-                        )
++                        # Items already removed from queue at start of function
++                        async with prisma_client._spend_log_transactions_lock:
++                            remaining_count = len(prisma_client.spend_log_transactions)
+                         verbose_proxy_logger.debug(
+-                            f"{len(logs_to_process)} logs processed. Remaining in queue: {len(prisma_client.spend_log_transactions)}"
++                            f"{len(logs_to_process)} logs processed. Remaining in queue: {remaining_count}"
+                         )
+                     break
+                 except DB_CONNECTION_ERROR_TYPES:
+@@ -3383,12 +3420,14 @@ class ProxyUpdateSpend:
+                         raise
+                     await asyncio.sleep(2**i)
+         except Exception as e:
+-            prisma_client.spend_log_transactions = prisma_client.spend_log_transactions[
+-                len(logs_to_process) :
+-            ]
++            # Logs already removed from queue at start - don't put them back
++            # This matches the original behavior where logs are removed even on error
+             _raise_failed_update_spend_exception(
+                 e=e, start_time=start_time, proxy_logging_obj=proxy_logging_obj
+             )
++        finally:
++            # Clean up logs_to_process after all processing is complete
++            del logs_to_process
+ 
+     @staticmethod
+     def disable_spend_updates() -> bool:
+@@ -3405,7 +3444,7 @@ class ProxyUpdateSpend:
+ 
+ async def update_spend(  # noqa: PLR0915
+     prisma_client: PrismaClient,
+-    db_writer_client: Optional[HTTPHandler],
++    db_writer_client: Optional[AsyncHTTPHandler],
+     proxy_logging_obj: ProxyLogging,
+ ):
+     """
+@@ -3427,19 +3466,120 @@ async def update_spend(  # noqa: PLR0915
+     )
+ 
+     ### UPDATE SPEND LOGS ###
++    # Check queue size with lock protection
++    async with prisma_client._spend_log_transactions_lock:
++        queue_size = len(prisma_client.spend_log_transactions)
+     verbose_proxy_logger.debug(
+-        "Spend Logs transactions: {}".format(len(prisma_client.spend_log_transactions))
++        "Spend Logs transactions: {}".format(queue_size)
+     )
+ 
+-    if len(prisma_client.spend_log_transactions) > 0:
+-        await ProxyUpdateSpend.update_spend_logs(
+-            n_retry_times=n_retry_times,
++    # Process spend log transactions when called directly.
++    # This keeps backwards compatibility with the old behavior.
++    # See update_spend_logs_job and _monitor_spend_logs_queue for the new behavior.
++    # Safe to keep: under high concurrency this can take up to ~30s to run,
++    # so it's unlikely to overlap with monitor_spend_logs_queue.
++    if queue_size > 0:
++        await update_spend_logs_job(
+             prisma_client=prisma_client,
+-            proxy_logging_obj=proxy_logging_obj,
+             db_writer_client=db_writer_client,
++            proxy_logging_obj=proxy_logging_obj,
+         )
+ 
+ 
++async def update_spend_logs_job(
++    prisma_client: PrismaClient,
++    db_writer_client: Optional[AsyncHTTPHandler],
++    proxy_logging_obj: ProxyLogging,
++):
++    """
++    Job to process spend_log_transactions queue.
++    
++    This job is triggered based on queue size rather than time.
++    Processes spend log transactions when the queue reaches a threshold.
++    """
++    n_retry_times = 3
++    
++    # Check queue size with lock protection
++    async with prisma_client._spend_log_transactions_lock:
++        queue_size = len(prisma_client.spend_log_transactions)
++    
++    if queue_size == 0:
++        return
++    
++    await ProxyUpdateSpend.update_spend_logs(
++        n_retry_times=n_retry_times,
++        prisma_client=prisma_client,
++        proxy_logging_obj=proxy_logging_obj,
++        db_writer_client=db_writer_client,
++    )
++
++
++async def _monitor_spend_logs_queue(
++    prisma_client: PrismaClient,
++    db_writer_client: Optional[AsyncHTTPHandler],
++    proxy_logging_obj: ProxyLogging,
++):
++    """
++    Background task that monitors the spend_log_transactions queue size
++    and triggers processing when the threshold is reached.
++    
++    Args:
++        prisma_client: Prisma client instance
++        db_writer_client: Optional HTTP handler for external spend logs endpoint
++        proxy_logging_obj: Proxy logging object
++    """
++    from litellm.constants import SPEND_LOG_QUEUE_SIZE_THRESHOLD, SPEND_LOG_QUEUE_POLL_INTERVAL
++    
++    threshold = SPEND_LOG_QUEUE_SIZE_THRESHOLD
++    base_interval = SPEND_LOG_QUEUE_POLL_INTERVAL
++    max_backoff = 30.0  # Maximum backoff interval in seconds
++    backoff_multiplier = 1.5  # Exponential backoff multiplier
++    current_interval = base_interval
++    
++    verbose_proxy_logger.info(
++        f"Starting spend logs queue monitor (threshold: {threshold}, poll_interval: {base_interval}s)"
++    )
++    
++    while True:
++        try:
++            # Check queue size with lock protection
++            async with prisma_client._spend_log_transactions_lock:
++                queue_size = len(prisma_client.spend_log_transactions)
++            
++            if queue_size > 0:
++                if queue_size >= threshold:
++                    verbose_proxy_logger.debug(
++                        f"Spend logs queue size ({queue_size}) reached threshold ({threshold}), triggering processing"
++                    )
++                    # Reset to base interval when threshold is reached
++                    current_interval = base_interval
++                else:
++                    verbose_proxy_logger.debug(
++                        f"Spend logs queue size ({queue_size}) below threshold ({threshold}), processing with backoff"
++                    )
++                    # Exponential backoff when below threshold but still processing
++                    current_interval = min(current_interval * backoff_multiplier, max_backoff)
++                
++                await update_spend_logs_job(
++                    prisma_client=prisma_client,
++                    db_writer_client=db_writer_client,
++                    proxy_logging_obj=proxy_logging_obj,
++                )
++            else:
++                # Exponential backoff when no logs to process
++                current_interval = min(current_interval * backoff_multiplier, max_backoff)
++            
++            await asyncio.sleep(current_interval)
++        except Exception as e:
++            verbose_proxy_logger.error(
++                f"Error in spend logs queue monitor: {str(e)}\n{traceback.format_exc()}"
++            )
++            # Continue monitoring even if there's an error, with exponential backoff
++            current_interval = min(current_interval * backoff_multiplier, max_backoff)
++            await asyncio.sleep(current_interval)
++
++
++
+ def _raise_failed_update_spend_exception(
+     e: Exception, start_time: float, proxy_logging_obj: ProxyLogging
+ ):
