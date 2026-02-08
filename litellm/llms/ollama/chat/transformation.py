@@ -210,15 +210,13 @@ class OllamaChatConfig(BaseConfig):
                         optional_params["think"] = True
                 # If type is "disabled" or missing, don't set think (defaults to off)
             ### FUNCTION CALLING LOGIC ###
-            # Ollama 0.6+ supports native tool calling for all models.
-            # Always use native tools - the JSON fallback mode was for pre-0.6 Ollama
-            # which is no longer supported. Native tools provide better reliability
-            # and proper tool_calls response format.
+            # Ollama 0.4+ supports native tool calling - pass tools directly
+            # and let Ollama handle model capability detection
+            # Fixes: https://github.com/BerriAI/litellm/issues/18922
             if param == "tools":
                 optional_params["tools"] = value
 
             if param == "functions":
-                # Convert functions to tools format
                 optional_params["tools"] = value
         non_default_params.pop("tool_choice", None)  # causes ollama requests to hang
         non_default_params.pop("functions", None)  # causes ollama requests to hang
@@ -449,6 +447,10 @@ class OllamaChatConfig(BaseConfig):
 
             _message = litellm.Message(**response_json_message)
             model_response.choices[0].message = _message  # type: ignore
+            # Set finish_reason to "tool_calls" when tool_calls are present
+            # Fixes: https://github.com/BerriAI/litellm/issues/18922
+            if _message.tool_calls:
+                model_response.choices[0].finish_reason = "tool_calls"
         model_response.created = int(time.time())
         model_response.model = "ollama_chat/" + model
         prompt_tokens = response_json.get("prompt_eval_count", litellm.token_counter(messages=messages))  # type: ignore
@@ -581,6 +583,10 @@ class OllamaChatCompletionResponseIterator(BaseModelResponseIterator):
 
             if chunk["done"] is True:
                 finish_reason = chunk.get("done_reason", "stop")
+                # Override finish_reason when tool_calls are present
+                # Fixes: https://github.com/BerriAI/litellm/issues/18922
+                if tool_calls is not None:
+                    finish_reason = "tool_calls"
                 choices = [
                     StreamingChoices(
                         delta=delta,

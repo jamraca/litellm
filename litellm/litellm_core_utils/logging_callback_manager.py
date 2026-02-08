@@ -114,6 +114,27 @@ class LoggingCallbackManager:
         for c in remove_list:
             callback_list.remove(c)
 
+    def remove_callbacks_by_type(self, callback_list, callback_type):
+        """
+        Remove all callbacks of a specific type from a callback list.
+        
+        Args:
+            callback_list: The list to remove callbacks from (e.g., litellm.callbacks)
+            callback_type: The class type to match (e.g., SemanticToolFilterHook)
+            
+        Example:
+            litellm.logging_callback_manager.remove_callbacks_by_type(
+                litellm.callbacks, SemanticToolFilterHook
+            )
+        """
+        if not isinstance(callback_list, list):
+            return
+
+        remove_list = [c for c in callback_list if isinstance(c, callback_type)]
+
+        for c in remove_list:
+            callback_list.remove(c)
+
     def _add_string_callback_to_list(
         self, callback: str, parent_list: List[Union[CustomLogger, Callable, str]]
     ):
@@ -166,6 +187,7 @@ class LoggingCallbackManager:
             endpoint = callback_config.get("endpoint")
             headers = callback_config.get("headers")
             event_types = callback_config.get("event_types")
+            log_format = callback_config.get("log_format")
 
             if endpoint is None or headers is None:
                 verbose_logger.warning(
@@ -180,6 +202,7 @@ class LoggingCallbackManager:
                 and cached_logger.endpoint == endpoint
                 and cached_logger.headers == headers
                 and cached_logger.event_types == event_types
+                and cached_logger.log_format == log_format
             ):
                 return cached_logger
 
@@ -187,6 +210,7 @@ class LoggingCallbackManager:
                 endpoint=endpoint,
                 headers=headers,
                 event_types=event_types,
+                log_format=log_format,
             )
             _generic_api_logger_cache[callback] = new_logger
             return new_logger
