@@ -8342,6 +8342,12 @@ class ProviderConfigManager:
             )
 
             return AzurePassthroughConfig()
+        elif LlmProviders.ANTHROPIC == provider:
+            from litellm.llms.anthropic.passthrough.transformation import (
+                AnthropicPassthroughConfig,
+            )
+
+            return AnthropicPassthroughConfig()
         return None
 
     @staticmethod
