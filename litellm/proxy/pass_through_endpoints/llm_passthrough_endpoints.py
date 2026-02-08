@@ -638,8 +638,39 @@ async def anthropic_proxy_route(
             (b"x-api-key", anthropic_api_key.encode("utf-8"))
         )
         verbose_proxy_logger.info("[OAUTH_DEBUG] Injected x-api-key into request headers (OAuth header missing)")
+    elif has_auth_header:
+        # OAuth token detected - add required headers for proxy passthrough
+        # Anthropic requires 'anthropic-dangerous-direct-browser-access: true' when
+        # OAuth tokens are used from non-Claude-Code clients (i.e., through a proxy).
+        # Without this header, Anthropic rejects with "credential only authorized for Claude Code".
+        # See upstream PR #19453: optionally_handle_anthropic_oauth() in common_utils.py
+        from litellm.types.llms.anthropic import (
+            ANTHROPIC_OAUTH_BETA_HEADER,
+            ANTHROPIC_OAUTH_TOKEN_PREFIX,
+        )
+
+        auth_value = request.headers.get("authorization", "")
+        if auth_value.startswith(f"Bearer {ANTHROPIC_OAUTH_TOKEN_PREFIX}"):
+            request.scope["headers"].append(
+                (b"anthropic-dangerous-direct-browser-access", b"true")
+            )
+            # Ensure anthropic-beta includes OAuth beta header
+            existing_beta = request.headers.get("anthropic-beta", "")
+            if ANTHROPIC_OAUTH_BETA_HEADER not in existing_beta:
+                if existing_beta:
+                    combined_beta = f"{existing_beta},{ANTHROPIC_OAUTH_BETA_HEADER}"
+                else:
+                    combined_beta = ANTHROPIC_OAUTH_BETA_HEADER
+                request.scope["headers"].append(
+                    (b"anthropic-beta", combined_beta.encode("utf-8"))
+                )
+            verbose_proxy_logger.info(
+                "[OAUTH_DEBUG] OAuth token detected (sk-ant-oat*) - added anthropic-dangerous-direct-browser-access and beta headers for proxy passthrough"
+            )
+        else:
+            verbose_proxy_logger.info("[OAUTH_DEBUG] Authorization header present but not OAuth token - passing through as-is")
     else:
-        verbose_proxy_logger.info("[OAUTH_DEBUG] NOT injecting x-api-key - using OAuth pass-through")
+        verbose_proxy_logger.info("[OAUTH_DEBUG] x-api-key present - passing through as-is")
 
     # Parse request body to extract model
     request_body = await get_request_body(request=request)
