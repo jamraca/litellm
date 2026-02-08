@@ -297,9 +297,15 @@ def llm_passthrough_route(
     print(f"[PASSTHROUGH_DEBUG] outgoing_headers={list(headers.keys())}", flush=True)
     print(f"[PASSTHROUGH_DEBUG] has_authorization={'authorization' in headers}", flush=True)
     print(f"[PASSTHROUGH_DEBUG] has_x_api_key={'x-api-key' in headers}", flush=True)
-    if "authorization" in headers:
-        auth_val = headers["authorization"]
-        print(f"[PASSTHROUGH_DEBUG] authorization={auth_val[:25]}... (len={len(auth_val)})", flush=True)
+    # Log key header VALUES (not just presence)
+    for hdr_name in ("authorization", "user-agent", "anthropic-beta", "anthropic-dangerous-direct-browser-access", "anthropic-version", "x-app"):
+        if hdr_name in headers:
+            val = headers[hdr_name]
+            if hdr_name == "authorization":
+                val = val[:25] + f"... (len={len(val)})"
+            print(f"[PASSTHROUGH_DEBUG] {hdr_name}={val}", flush=True)
+    # Log model swap
+    print(f"[PASSTHROUGH_DEBUG] model_in_body={json.get('model') if json and isinstance(json, dict) else 'N/A'}", flush=True)
 
     request = client.client.build_request(
         method=method,
@@ -312,6 +318,9 @@ def llm_passthrough_route(
         headers=headers,
         cookies=cookies,
     )
+
+    # DEBUG: Log the ACTUAL request headers httpx will send (after build_request may modify them)
+    print(f"[PASSTHROUGH_DEBUG] ACTUAL request.headers={dict(request.headers)}", flush=True)
 
     ## IS STREAMING REQUEST
     is_streaming_request = provider_config.is_streaming_request(
