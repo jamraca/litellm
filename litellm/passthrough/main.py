@@ -112,6 +112,12 @@ async def allm_passthrough_route(
 
             # Only call raise_for_status if it's a Response object (not a generator)
             if isinstance(response, httpx.Response):
+                if response.status_code >= 400:
+                    print(f"[PASSTHROUGH_DEBUG] allm ERROR status={response.status_code}", flush=True)
+                    try:
+                        print(f"[PASSTHROUGH_DEBUG] allm response_body={response.text[:500]}", flush=True)
+                    except Exception:
+                        print(f"[PASSTHROUGH_DEBUG] allm could not read response body", flush=True)
                 response.raise_for_status()
             
             return response
@@ -286,6 +292,15 @@ def llm_passthrough_route(
     if json and isinstance(json, dict) and "model" in json:
         json["model"] = model
 
+    # DEBUG: Log outgoing headers to diagnose auth issues
+    print(f"[PASSTHROUGH_DEBUG] url={updated_url}", flush=True)
+    print(f"[PASSTHROUGH_DEBUG] outgoing_headers={list(headers.keys())}", flush=True)
+    print(f"[PASSTHROUGH_DEBUG] has_authorization={'authorization' in headers}", flush=True)
+    print(f"[PASSTHROUGH_DEBUG] has_x_api_key={'x-api-key' in headers}", flush=True)
+    if "authorization" in headers:
+        auth_val = headers["authorization"]
+        print(f"[PASSTHROUGH_DEBUG] authorization={auth_val[:25]}... (len={len(auth_val)})", flush=True)
+
     request = client.client.build_request(
         method=method,
         url=updated_url,
@@ -376,6 +391,11 @@ async def _async_passthrough_request(
         else:
             response = await response_result
             await response.aread()
+            # DEBUG: Log response body on error before raise_for_status throws it away
+            if response.status_code >= 400:
+                print(f"[PASSTHROUGH_DEBUG] ERROR status={response.status_code}", flush=True)
+                print(f"[PASSTHROUGH_DEBUG] response_body={response.text[:500]}", flush=True)
+                print(f"[PASSTHROUGH_DEBUG] response_headers={dict(response.headers)}", flush=True)
             response.raise_for_status()
             return response
     else:
