@@ -664,6 +664,7 @@ async def anthropic_proxy_route(
     data["endpoint"] = endpoint
     data["data"] = request_body
     data["custom_llm_provider"] = "anthropic"
+    data["request_headers"] = dict(request.headers)
 
     # CRITICAL: Populate messages for callbacks
     # Callbacks expect data["messages"] to extract query (see callbacks.py:328)
