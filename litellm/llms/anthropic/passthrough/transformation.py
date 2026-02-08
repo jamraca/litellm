@@ -92,6 +92,18 @@ class AnthropicPassthroughConfig(BasePassthroughConfig):
         """
         return api_base or os.getenv("ANTHROPIC_API_BASE") or "https://api.anthropic.com"
 
+    @property
+    def forward_request_headers(self) -> bool:
+        """
+        Anthropic passthrough must forward client request headers.
+
+        OAuth Bearer tokens arrive in the Authorization header from the client.
+        Anthropic accepts Authorization: Bearer <token> with the
+        anthropic-beta: oauth-2025-04-20 header. Without forwarding,
+        the upstream request has no auth and returns 401.
+        """
+        return True
+
     def validate_environment(
         self,
         headers: dict,
@@ -104,10 +116,13 @@ class AnthropicPassthroughConfig(BasePassthroughConfig):
     ) -> dict:
         """
         Validate and prepare headers for Anthropic API.
-        For passthrough, we rely on headers being passed through from the client.
+
+        For OAuth passthrough, client headers (including Authorization) are
+        forwarded via forward_request_headers=True. If an API key is available
+        (from config or ANTHROPIC_API_KEY env), set x-api-key as fallback.
         """
-        # For passthrough, we don't modify headers - they come from the client
-        # This includes OAuth Authorization headers
+        if api_key:
+            headers["x-api-key"] = api_key
         return headers
 
     @staticmethod

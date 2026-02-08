@@ -271,7 +271,7 @@ def llm_passthrough_route(
     headers = BasePassthroughUtils.forward_headers_from_request(
         request_headers=request_headers or {},
         headers=auth_headers,
-        forward_headers=False,
+        forward_headers=getattr(provider_config, "forward_request_headers", False),
     )
 
     headers, signed_json_body = provider_config.sign_request(
