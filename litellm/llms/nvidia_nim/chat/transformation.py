@@ -7,6 +7,12 @@ This file only contains param mapping logic
 
 API calling is done using the OpenAI SDK with an api_base
 """
+import json
+import re
+from typing import Optional
+
+from litellm.types.utils import ChatCompletionMessageToolCall, Function
+
 from litellm.llms.openai.chat.gpt_transformation import OpenAIGPTConfig
 
 
@@ -108,3 +114,64 @@ class NvidiaNimConfig(OpenAIGPTConfig):
             elif param in supported_openai_params:
                 optional_params[param] = value
         return optional_params
+
+    def _check_and_fix_if_content_is_tool_call(
+        self, content: str, optional_params: dict
+    ) -> Optional[ChatCompletionMessageToolCall]:
+        """
+        Nvidia Kimi models can occasionally emit tool calls as plain text like:
+        `Explore(: some free-form instruction)`.
+
+        Convert this fallback format into an OpenAI-compatible tool call.
+        """
+        tool_call = super()._check_and_fix_if_content_is_tool_call(
+            content=content, optional_params=optional_params
+        )
+        if tool_call is not None:
+            return tool_call
+
+        if optional_params.get("tools") is None:
+            return None
+
+        tool_call_match = re.match(
+            r"^\s*([A-Za-z0-9_-]{1,64})\(\s*(.*?)\s*\)\s*$",
+            content,
+            re.DOTALL,
+        )
+        if tool_call_match is None:
+            return None
+
+        tool_name = tool_call_match.group(1)
+        tool_argument_string = tool_call_match.group(2).strip()
+        if tool_argument_string.startswith(":"):
+            tool_argument_string = tool_argument_string[1:].strip()
+
+        tool_definition = None
+        for tool in optional_params.get("tools", []):
+            if tool.get("function", {}).get("name") == tool_name:
+                tool_definition = tool
+                break
+
+        if tool_definition is None:
+            return None
+
+        try:
+            parsed_tool_arguments = json.loads(tool_argument_string)
+            if isinstance(parsed_tool_arguments, str):
+                raise ValueError("Expected object-like tool arguments")
+            arguments = json.dumps(parsed_tool_arguments)
+        except Exception:
+            function_definition = tool_definition.get("function", {})
+            parameters = function_definition.get("parameters", {})
+            properties = parameters.get("properties", {})
+            required_params = parameters.get("required", [])
+            selected_param_name = (
+                required_params[0]
+                if isinstance(required_params, list) and len(required_params) > 0
+                else next(iter(properties), "input")
+            )
+            arguments = json.dumps({selected_param_name: tool_argument_string})
+
+        return ChatCompletionMessageToolCall(
+            function=Function(name=tool_name, arguments=arguments)
+        )
