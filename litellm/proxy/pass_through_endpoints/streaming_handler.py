@@ -171,6 +171,19 @@ class PassThroughStreamingHandler:
             standard_logging_response_object = StandardPassThroughResponseObject(
                 response=f"cannot parse chunks to standard response object. Chunks={all_chunks}"
             )
+
+        # Signal that the stream is complete with the assembled response.
+        # async_success_handler dispatches to async_log_success_event ONLY when
+        # "async_complete_streaming_response" is present in model_call_details
+        # (see litellm_logging.py:2573-2589). Without this, streaming passthrough
+        # requests dispatch to async_log_stream_event instead, which custom loggers
+        # (e.g. ConversationCallback) don't implement — causing silent callback drops
+        # for conversation storage, summary generation, and outcome recording.
+        if hasattr(litellm_logging_obj, "model_call_details"):
+            litellm_logging_obj.model_call_details[
+                "async_complete_streaming_response"
+            ] = standard_logging_response_object
+
         await litellm_logging_obj.async_success_handler(
             result=standard_logging_response_object,
             start_time=start_time,
