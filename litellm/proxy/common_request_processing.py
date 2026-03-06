@@ -872,6 +872,32 @@ class ProxyBaseLLMRequestProcessing:
                     requested_model_from_client
                 )
             if route_type == "allm_passthrough_route":
+                # Determine endpoint type from custom_llm_provider for callback routing
+                from litellm.proxy.pass_through_endpoints.streaming_handler import (
+                    PassThroughStreamingHandler,
+                )
+                from litellm.proxy.pass_through_endpoints.success_handler import (
+                    PassThroughEndpointLogging,
+                )
+                from litellm.types.passthrough_endpoints.pass_through_endpoints import (
+                    EndpointType,
+                )
+
+                provider = self.data.get("custom_llm_provider", "")
+                if provider == "anthropic":
+                    pt_endpoint_type = EndpointType.ANTHROPIC
+                elif provider == "openai":
+                    pt_endpoint_type = EndpointType.OPENAI
+                elif provider in ("vertex_ai", "vertex-ai"):
+                    pt_endpoint_type = EndpointType.VERTEX_AI
+                else:
+                    pt_endpoint_type = EndpointType.GENERIC
+
+                pt_success_handler = PassThroughEndpointLogging()
+                pt_url_route = self.data.get("endpoint", "")
+                pt_request_body = self.data.get("json", {})
+                pt_start_time = datetime.now()
+
                 # Check if response is an async generator
                 if self._is_streaming_response(response):
                     if asyncio.iscoroutine(response):
@@ -879,17 +905,71 @@ class ProxyBaseLLMRequestProcessing:
                     else:
                         generator = response
 
-                    # For passthrough routes, stream directly without error parsing
-                    # since we're dealing with raw binary data (e.g., AWS event streams)
+                    # Wrap generator with chunk collection for callback invocation.
+                    # Yields chunks in real-time, then fires async_log_success_event
+                    # via _route_streaming_logging_to_handler on stream completion.
+                    async def _callback_streaming_wrapper(
+                        gen: Any,
+                        log_obj: LiteLLMLoggingObj,
+                        success_handler: PassThroughEndpointLogging,
+                        url_route: str,
+                        request_body: dict,
+                        endpoint_type: EndpointType,
+                        start: datetime,
+                    ) -> AsyncGenerator[bytes, None]:
+                        raw_bytes: list[bytes] = []
+                        try:
+                            async for chunk in gen:
+                                if isinstance(chunk, (bytes, bytearray)):
+                                    raw_bytes.append(bytes(chunk))
+                                else:
+                                    raw_bytes.append(
+                                        chunk.encode("utf-8")
+                                        if isinstance(chunk, str)
+                                        else bytes(chunk)
+                                    )
+                                yield chunk
+                        finally:
+                            end = datetime.now()
+                            asyncio.create_task(
+                                PassThroughStreamingHandler._route_streaming_logging_to_handler(
+                                    litellm_logging_obj=log_obj,
+                                    passthrough_success_handler_obj=success_handler,
+                                    url_route=url_route,
+                                    request_body=request_body,
+                                    endpoint_type=endpoint_type,
+                                    start_time=start,
+                                    raw_bytes=raw_bytes,
+                                    end_time=end,
+                                )
+                            )
+
                     return StreamingResponse(
-                        content=generator,
+                        content=_callback_streaming_wrapper(
+                            gen=generator,
+                            log_obj=logging_obj,
+                            success_handler=pt_success_handler,
+                            url_route=pt_url_route,
+                            request_body=pt_request_body,
+                            endpoint_type=pt_endpoint_type,
+                            start=pt_start_time,
+                        ),
                         status_code=status.HTTP_200_OK,
                         headers=custom_headers,
                     )
                 else:
-                    # Traditional HTTP response with aiter_bytes
+                    # Traditional HTTP response with aiter_bytes — use chunk_processor
+                    # for callback invocation on stream completion
                     return StreamingResponse(
-                        content=response.aiter_bytes(),
+                        content=PassThroughStreamingHandler.chunk_processor(
+                            response=response,
+                            request_body=pt_request_body,
+                            litellm_logging_obj=logging_obj,
+                            endpoint_type=pt_endpoint_type,
+                            start_time=pt_start_time,
+                            passthrough_success_handler_obj=pt_success_handler,
+                            url_route=pt_url_route,
+                        ),
                         status_code=response.status_code,
                         headers=custom_headers,
                     )
